@@ -1,32 +1,69 @@
+import { useEffect, useState } from "react";
 import { Activity, Coins, Radio, Timer } from "lucide-react";
-import { dashboardStats, usagePoints } from "../data/mock";
+import { api } from "../api";
 import { Card, PageHeader } from "../components/ui";
 
-function StatCard({
-  icon,
-  label,
-  value,
-  unit,
-  trend,
-  color,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  unit?: string;
-  trend?: string;
-  color: string;
-}) {
+interface Stat {
+  requests: number;
+  tokens: number;
+  avgLatencyMs: number;
+  activeChannels: number;
+}
+
+export function Dashboard() {
+  const [stat, setStat] = useState<Stat | null>(null);
+  const [daily, setDaily] = useState<{ date: string; requests: number; tokens: number; avgLatencyMs: number }[]>([]);
+  const [activeChannels, setActiveChannels] = useState(0);
+
+  useEffect(() => {
+    api
+      .todayStats()
+      .then((s) => setStat((prev) => ({ requests: s.requests, tokens: s.tokens, avgLatencyMs: s.avgLatencyMs, activeChannels: prev?.activeChannels ?? 0 })))
+      .catch(() => {});
+    api.listDailyStats(7).then((rows) => setDaily(rows.reverse())).catch(() => {});
+    api.listChannels().then((chs) => {
+      const act = chs.filter((c) => c.status === "active").length;
+      setActiveChannels(act);
+      setStat((prev) => (prev ? { ...prev, activeChannels: act } : prev));
+    }).catch(() => {});
+  }, []);
+
+  const requests = stat?.requests ?? 0;
+  const tokens = stat?.tokens ?? 0;
+  const avg = stat?.avgLatencyMs ?? 0;
+
+  const maxReq = Math.max(1, ...daily.map((d) => d.requests));
+  const maxTok = Math.max(1, ...daily.map((d) => d.tokens));
+
+  return (
+    <div>
+      <PageHeader title="仪表盘" description="今日网关运行概览" />
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard icon={<Activity size={20} className="text-indigo-600" />} color="bg-indigo-50" label="今日请求数" value={requests.toLocaleString()} />
+        <StatCard icon={<Coins size={20} className="text-violet-600" />} color="bg-violet-50" label="Token 消耗" value={tokens.toLocaleString()} />
+        <StatCard icon={<Radio size={20} className="text-emerald-600" />} color="bg-emerald-50" label="活跃渠道数" value={String(activeChannels)} />
+        <StatCard icon={<Timer size={20} className="text-amber-600" />} color="bg-amber-50" label="平均延迟" value={String(Math.round(avg))} unit="ms" />
+      </div>
+
+      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Card>
+          <h3 className="mb-4 text-sm font-semibold text-gray-700">近 7 天请求趋势</h3>
+          <Chart values={daily.map((d) => d.requests)} max={maxReq} labels={daily.map((d) => d.date.slice(5))} color="bg-indigo-500/80" />
+        </Card>
+        <Card>
+          <h3 className="mb-4 text-sm font-semibold text-gray-700">近 7 天 Token 消耗</h3>
+          <Chart values={daily.map((d) => d.tokens)} max={maxTok} labels={daily.map((d) => d.date.slice(5))} color="bg-violet-500/80" />
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ icon, label, value, unit, color }: { icon: React.ReactNode; label: string; value: string; unit?: string; color: string }) {
   return (
     <Card>
-      <div className="flex items-start justify-between">
-        <div className={`flex h-11 w-11 items-center justify-center rounded-lg ${color}`}>{icon}</div>
-        {trend && (
-          <span className="rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-600">
-            ↑ {trend}
-          </span>
-        )}
-      </div>
+      <div className={`flex h-11 w-11 items-center justify-center rounded-lg ${color}`}>{icon}</div>
       <p className="mt-4 text-sm text-gray-500">{label}</p>
       <p className="mt-1 text-2xl font-bold text-gray-900">
         {value}
@@ -36,66 +73,16 @@ function StatCard({
   );
 }
 
-function UsageChart({ data }: { data: typeof usagePoints }) {
-  const max = Math.max(...data.map((p) => p.requests));
+function Chart({ values, max, labels, color }: { values: number[]; max: number; labels: string[]; color: string }) {
   return (
-    <Card>
-      <h3 className="mb-4 text-sm font-semibold text-gray-700">今日请求趋势</h3>
-      <div className="flex h-48 items-end gap-2">
-        {data.map((p) => (
-          <div key={p.label} className="flex flex-1 flex-col items-center gap-1">
-            <div
-              className="w-full rounded-t-md bg-indigo-500/80 transition-all hover:bg-indigo-600"
-              style={{ height: `${(p.requests / max) * 100}%`, minHeight: "8px" }}
-              title={`请求 ${p.requests.toLocaleString()}`}
-            />
-            <span className="text-[10px] text-gray-400">{p.label}</span>
-          </div>
-        ))}
-      </div>
-    </Card>
-  );
-}
-
-export function Dashboard() {
-  const s = dashboardStats;
-  return (
-    <div>
-      <PageHeader title="仪表盘" description="今日网关运行概览" />
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          icon={<Activity size={20} className="text-indigo-600" />}
-          color="bg-indigo-50"
-          label="今日请求数"
-          value={s.todayRequests.toLocaleString()}
-          trend={`${s.trend.requests}%`}
-        />
-        <StatCard
-          icon={<Coins size={20} className="text-violet-600" />}
-          color="bg-violet-50"
-          label="Token 消耗"
-          value={s.todayTokens.toLocaleString()}
-          trend={`${s.trend.tokens}%`}
-        />
-        <StatCard
-          icon={<Radio size={20} className="text-emerald-600" />}
-          color="bg-emerald-50"
-          label="活跃渠道数"
-          value={String(s.activeChannels)}
-        />
-        <StatCard
-          icon={<Timer size={20} className="text-amber-600" />}
-          color="bg-amber-50"
-          label="平均延迟"
-          value={String(s.avgLatencyMs)}
-          unit="ms"
-        />
-      </div>
-
-      <div className="mt-6">
-        <UsageChart data={usagePoints} />
-      </div>
+    <div className="flex h-48 items-end gap-2">
+      {values.map((v, i) => (
+        <div key={i} className="flex flex-1 flex-col items-center gap-1">
+          <div className={`w-full rounded-t-md ${color}`} style={{ height: `${(v / max) * 100}%`, minHeight: "4px" }} title={v.toLocaleString()} />
+          <span className="text-[10px] text-gray-400">{labels[i]}</span>
+        </div>
+      ))}
+      {values.length === 0 && <p className="w-full py-16 text-center text-sm text-gray-400">暂无数据</p>}
     </div>
   );
 }

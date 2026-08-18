@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { PageHeader, Card } from "../components/ui";
@@ -17,27 +17,28 @@ const inputCls =
   "w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
 
 export function Logs() {
-  const { logs } = useAppStore();
+  const { logs, loadingLogs, refreshLogs } = useAppStore();
   const [keyword, setKeyword] = useState("");
   const [channel, setChannel] = useState("全部");
   const [model, setModel] = useState("全部");
 
+  // 防抖关键词，避免每次键入都触发查询
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      refreshLogs({ keyword: keyword || undefined, channel, model });
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [keyword, channel, model, refreshLogs]);
+
+  // 首次挂载
+  useEffect(() => {
+    refreshLogs({});
+  }, [refreshLogs]);
+
   const channels = useMemo(() => ["全部", ...Array.from(new Set(logs.map((l) => l.channel)))], [logs]);
   const models = useMemo(() => ["全部", ...Array.from(new Set(logs.map((l) => l.model)))], [logs]);
 
-  const filtered = useMemo(() => {
-    return logs.filter((l) => {
-      const kw = keyword.trim().toLowerCase();
-      const matchKw =
-        !kw ||
-        l.id.toLowerCase().includes(kw) ||
-        l.key.toLowerCase().includes(kw) ||
-        l.channel.toLowerCase().includes(kw);
-      const matchChannel = channel === "全部" || l.channel === channel;
-      const matchModel = model === "全部" || l.model === model;
-      return matchKw && matchChannel && matchModel;
-    });
-  }, [logs, keyword, channel, model]);
+  const filtered = logs;
 
   return (
     <div>
@@ -103,7 +104,14 @@ export function Logs() {
                 <td className="px-4 py-2.5 text-gray-600">${l.cost.toFixed(3)}</td>
               </tr>
             ))}
-            {filtered.length === 0 && (
+            {loadingLogs && (
+              <tr>
+                <td colSpan={9} className="px-4 py-10 text-center text-sm text-gray-400">
+                  加载中…
+                </td>
+              </tr>
+            )}
+            {!loadingLogs && filtered.length === 0 && (
               <tr>
                 <td colSpan={9} className="px-4 py-10 text-center text-sm text-gray-400">
                   没有符合条件的日志记录

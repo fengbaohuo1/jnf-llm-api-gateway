@@ -25,8 +25,10 @@ tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-shell = "2"
-tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 tauri-plugin-store = "2"
+sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio", "migrate", "derive", "macros"] }
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

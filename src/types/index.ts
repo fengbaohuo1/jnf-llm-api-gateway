@@ -38,20 +38,3 @@ export interface RequestLog {
   tokens: number;
   cost: number; // USD
 }
-
-export interface DashboardStats {
-  todayRequests: number;
-  todayTokens: number;
-  activeChannels: number;
-  avgLatencyMs: number;
-  trend: {
-    requests: number; // % change
-    tokens: number;
-  };
-}
-
-export interface UsagePoint {
-  label: string;
-  requests: number;
-  tokens: number;
-}

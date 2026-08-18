@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Pencil, Plus, Trash2, Cable } from "lucide-react";
 import { channelTypes } from "../data/mock";
 import type { Channel, ChannelStatus, ChannelType } from "../types";
@@ -113,11 +113,15 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 }
 
 export function Channels() {
-  const { channels, addChannel, updateChannel, removeChannel, toggleChannelStatus, testChannel } = useAppStore();
+  const { channels, loadingChannels, addChannel, updateChannel, removeChannel, toggleChannelStatus, testChannel, refreshChannels } = useAppStore();
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Channel | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Channel | null>(null);
   const [testMsg, setTestMsg] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    refreshChannels();
+  }, [refreshChannels]);
 
   const openAdd = () => {
     setEditing(null);
@@ -128,17 +132,25 @@ export function Channels() {
     setModalOpen(true);
   };
 
-  const handleSubmit = (data: FormState) => {
+  const handleSubmit = async (data: FormState) => {
     if (editing) {
-      updateChannel(editing.id, {
+      await updateChannel({
+        id: editing.id,
         name: data.name,
         type: data.type,
         baseUrl: data.baseUrl,
         model: data.model,
         status: data.status,
+        apiKey: data.apiKey,
       });
     } else {
-      addChannel({ name: data.name, type: data.type, baseUrl: data.baseUrl, model: data.model, status: data.status });
+      await addChannel({
+        name: data.name,
+        type: data.type,
+        baseUrl: data.baseUrl,
+        model: data.model,
+        apiKey: data.apiKey,
+      });
     }
     setModalOpen(false);
   };
@@ -146,8 +158,9 @@ export function Channels() {
   const handleTest = (id: string) => {
     setTestMsg((m) => ({ ...m, [id]: "测试中…" }));
     setTimeout(() => {
-      testChannel(id);
-      setTestMsg((m) => ({ ...m, [id]: "✅ 连接正常" }));
+      testChannel(id, Math.random() > 0.2)
+        .then(() => setTestMsg((m) => ({ ...m, [id]: "✅ 连接正常" })))
+        .catch(() => setTestMsg((m) => ({ ...m, [id]: "❌ 连接失败" })));
     }, 600);
   };
 
@@ -212,6 +225,13 @@ export function Channels() {
                 </td>
               </tr>
             ))}
+            {!loadingChannels && channels.length === 0 && (
+              <tr>
+                <td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-400">
+                  暂无渠道，点击右上角添加
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </Card>

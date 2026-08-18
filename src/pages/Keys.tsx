@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Plus, Trash2, Copy, KeyRound } from "lucide-react";
 import type { ApiKey } from "../types";
 import { useAppStore } from "../store/useAppStore";
@@ -7,13 +7,6 @@ import { Button, Modal } from "../components/Modal";
 
 const inputCls =
   "w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
-
-function generateKey(): string {
-  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-  let suffix = "";
-  for (let i = 0; i < 20; i++) suffix += chars[Math.floor(Math.random() * chars.length)];
-  return `sk-waliapi-${suffix}`;
-}
 
 function statusBadge(status: ApiKey["status"]) {
   return status === "active" ? (
@@ -34,12 +27,13 @@ function CreateKeyModal({
 }: {
   open: boolean;
   onClose: () => void;
-  onCreate: (name: string, quotaLimit: number, expiresAt: string | null) => void;
+  onCreate: (name: string, quotaLimit: number, expiresAt: string | null) => Promise<string>;
 }) {
   const [name, setName] = useState("");
   const [quota, setQuota] = useState<string>("-1");
   const [expires, setExpires] = useState("");
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   return (
     <Modal open={open} title={revealedKey ? "密钥已创建" : "创建密钥"} onClose={onClose}>
@@ -63,11 +57,15 @@ function CreateKeyModal({
       ) : (
         <form
           className="space-y-4"
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault();
-            const key = generateKey();
-            setRevealedKey(key);
-            onCreate(name, quota === "-1" ? -1 : Number(quota), expires || null);
+            setSubmitting(true);
+            try {
+              const key = await onCreate(name, quota === "-1" ? -1 : Number(quota), expires || null);
+              setRevealedKey(key);
+            } finally {
+              setSubmitting(false);
+            }
           }}
         >
           <label className="block">
@@ -92,8 +90,8 @@ function CreateKeyModal({
             <Button variant="secondary" onClick={onClose}>
               取消
             </Button>
-            <Button type="submit">
-              <KeyRound size={16} className="mr-1 inline" /> 生成
+            <Button type="submit" disabled={submitting}>
+              <KeyRound size={16} className="mr-1 inline" /> {submitting ? "生成中…" : "生成"}
             </Button>
           </div>
         </form>
@@ -103,9 +101,13 @@ function CreateKeyModal({
 }
 
 export function Keys() {
-  const { keys, addKey, removeKey, toggleKeyStatus } = useAppStore();
+  const { keys, loadingKeys, createKey, removeKey, toggleKeyStatus, refreshKeys } = useAppStore();
   const [modalOpen, setModalOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<ApiKey | null>(null);
+
+  useEffect(() => {
+    refreshKeys();
+  }, [refreshKeys]);
 
   const quotaUsed = (k: ApiKey) =>
     k.quotaLimit === -1 ? null : Math.min(100, Math.round((k.usedTokens / k.quotaLimit) * 100));
@@ -178,6 +180,13 @@ export function Keys() {
                 </tr>
               );
             })}
+            {!loadingKeys && keys.length === 0 && (
+              <tr>
+                <td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-400">
+                  暂无密钥，点击右上角创建
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </Card>
@@ -187,7 +196,9 @@ export function Keys() {
         onClose={() => {
           setModalOpen(false);
         }}
-        onCreate={(name, quotaLimit, expiresAt) => addKey({ name, key: "", status: "active", quotaLimit, expiresAt })}
+        onCreate={(name, quotaLimit, expiresAt) =>
+          createKey({ name, quotaLimit, expiresAt }).then((r) => r.key)
+        }
       />
 
       <Modal open={!!confirmDelete} title="删除密钥" onClose={() => setConfirmDelete(null)}>

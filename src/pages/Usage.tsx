@@ -1,26 +1,31 @@
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { BarChart3 } from "lucide-react";
-import { requestLogs, usagePoints } from "../data/mock";
+import { api } from "../api";
 import { Card, PageHeader } from "../components/ui";
 
 const ranges = ["今日", "本周", "本月"] as const;
 
 export function Usage() {
   const [range, setRange] = useState<(typeof ranges)[number]>("今日");
+  const [totals, setTotals] = useState({ requests: 0, tokens: 0, cost: 0 });
+  const [daily, setDaily] = useState<{ date: string; tokens: number }[]>([]);
 
-  const totals = useMemo(() => {
-    return requestLogs.reduce(
-      (acc, l) => {
-        acc.requests += 1;
-        acc.tokens += l.tokens;
-        acc.cost += l.cost;
-        return acc;
-      },
-      { requests: 0, tokens: 0, cost: 0 },
-    );
+  useEffect(() => {
+    api
+      .listRequests({})
+      .then((logs) => {
+        setTotals(
+          logs.reduce(
+            (acc, l) => ({ requests: acc.requests + 1, tokens: acc.tokens + l.tokens, cost: acc.cost + l.cost }),
+            { requests: 0, tokens: 0, cost: 0 },
+          ),
+        );
+      })
+      .catch(() => {});
+    api.listDailyStats(7).then((rows) => setDaily(rows.reverse())).catch(() => {});
   }, [range]);
 
-  const max = Math.max(...usagePoints.map((p) => p.tokens));
+  const max = Math.max(1, ...daily.map((d) => d.tokens));
 
   return (
     <div>
@@ -61,19 +66,20 @@ export function Usage() {
 
       <Card className="mt-6">
         <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-gray-700">
-          <BarChart3 size={16} /> Token 消耗（按时段）
+          <BarChart3 size={16} /> 近 7 天 Token 消耗
         </h3>
         <div className="flex h-56 items-end gap-3">
-          {usagePoints.map((p) => (
-            <div key={p.label} className="flex flex-1 flex-col items-center gap-1">
+          {daily.map((p, i) => (
+            <div key={i} className="flex flex-1 flex-col items-center gap-1">
               <span className="text-[10px] text-gray-400">{(p.tokens / 1000).toFixed(0)}k</span>
               <div
                 className="w-full rounded-t-md bg-violet-500/80 hover:bg-violet-600"
                 style={{ height: `${(p.tokens / max) * 100}%`, minHeight: "10px" }}
               />
-              <span className="text-[10px] text-gray-400">{p.label}</span>
+              <span className="text-[10px] text-gray-400">{p.date.slice(5)}</span>
             </div>
           ))}
+          {daily.length === 0 && <p className="w-full py-20 text-center text-sm text-gray-400">暂无数据</p>}
         </div>
       </Card>
     </div>

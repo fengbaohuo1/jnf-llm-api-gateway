@@ -1,79 +1,140 @@
 import { create } from "zustand";
-import type { ApiKey, Channel, RequestLog } from "../types";
-import { apiKeys as initialKeys, channels as initialChannels, requestLogs } from "../data/mock";
-
-// Zod-less simple id generator for the mock UI.
-export function generateId(prefix: string): string {
-  return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
-}
+import { api } from "../api";
+import type { ApiKey, Channel, RequestLog, ChannelType, ChannelStatus } from "../types";
 
 interface AppState {
   channels: Channel[];
   keys: ApiKey[];
   logs: RequestLog[];
+  loadingChannels: boolean;
+  loadingKeys: boolean;
+  loadingLogs: boolean;
 
-  addChannel: (channel: Omit<Channel, "id" | "apiKeyMasked" | "latencyMs" | "createdAt">) => void;
-  updateChannel: (id: string, patch: Partial<Channel>) => void;
-  removeChannel: (id: string) => void;
-  toggleChannelStatus: (id: string) => void;
-  testChannel: (id: string) => void;
+  refreshChannels: () => Promise<void>;
+  refreshKeys: () => Promise<void>;
+  refreshLogs: (filters?: { keyword?: string; channel?: string; model?: string }) => Promise<void>;
 
-  addKey: (key: Omit<ApiKey, "id" | "createdAt" | "usedTokens">) => void;
-  updateKey: (id: string, patch: Partial<ApiKey>) => void;
-  removeKey: (id: string) => void;
-  toggleKeyStatus: (id: string) => void;
+  addChannel: (input: {
+    name: string;
+    type: ChannelType;
+    baseUrl: string;
+    model: string;
+    apiKey: string;
+  }) => Promise<void>;
+  updateChannel: (input: {
+    id: string;
+    name: string;
+    type: ChannelType;
+    baseUrl: string;
+    model: string;
+    status: ChannelStatus;
+    apiKey: string;
+  }) => Promise<void>;
+  removeChannel: (id: string) => Promise<void>;
+  toggleChannelStatus: (id: string) => Promise<void>;
+  testChannel: (id: string, ok: boolean) => Promise<void>;
+
+  createKey: (input: { name: string; quotaLimit: number; expiresAt: string | null }) => Promise<{
+    id: string;
+    key: string;
+  }>;
+  removeKey: (id: string) => Promise<void>;
+  toggleKeyStatus: (id: string) => Promise<void>;
 }
 
-export const useAppStore = create<AppState>((set) => ({
-  channels: initialChannels,
-  keys: initialKeys,
-  logs: requestLogs,
+async function safe<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    throw new Error(e instanceof Error ? e.message : String(e));
+  }
+}
 
-  addChannel: (channel) =>
-    set((s) => ({
-      channels: [
-        { ...channel, id: generateId("ch"), apiKeyMasked: "sk-••••new", latencyMs: null, createdAt: new Date().toISOString().slice(0, 10) },
-        ...s.channels,
-      ],
-    })),
+export const useAppStore = create<AppState>((set, get) => ({
+  channels: [],
+  keys: [],
+  logs: [],
+  loadingChannels: false,
+  loadingKeys: false,
+  loadingLogs: false,
 
-  updateChannel: (id, patch) =>
-    set((s) => ({
-      channels: s.channels.map((c) => (c.id === id ? { ...c, ...patch } : c)),
-    })),
+  refreshChannels: async () => {
+    set({ loadingChannels: true });
+    try {
+      const channels = await safe(api.listChannels);
+      set({ channels, loadingChannels: false });
+    } catch (e) {
+      set({ loadingChannels: false });
+      console.error(e);
+    }
+  },
 
-  removeChannel: (id) =>
-    set((s) => ({ channels: s.channels.filter((c) => c.id !== id) })),
+  refreshKeys: async () => {
+    set({ loadingKeys: true });
+    try {
+      const keys = await safe(api.listKeys);
+      set({ keys, loadingKeys: false });
+    } catch (e) {
+      set({ loadingKeys: false });
+      console.error(e);
+    }
+  },
 
-  toggleChannelStatus: (id) =>
-    set((s) => ({
-      channels: s.channels.map((c) =>
-        c.id === id ? { ...c, status: c.status === "active" ? "disabled" : "active" } : c,
-      ),
-    })),
+  refreshLogs: async (filters) => {
+    set({ loadingLogs: true });
+    try {
+      const logs = await safe(() =>
+        api.listRequests({
+          keyword: filters?.keyword,
+          channel: filters?.channel,
+          model: filters?.model,
+        }),
+      );
+      set({ logs, loadingLogs: false });
+    } catch (e) {
+      set({ loadingLogs: false });
+      console.error(e);
+    }
+  },
 
-  testChannel: (id) =>
-    set((s) => ({
-      channels: s.channels.map((c) =>
-        c.id === id ? { ...c, status: "active", latencyMs: Math.round(300 + Math.random() * 600) } : c,
-      ),
-    })),
+  addChannel: async (input) => {
+    await safe(() => api.createChannel({ ...input, status: "active" }));
+    await get().refreshChannels();
+  },
 
-  addKey: (key) =>
-    set((s) => ({
-      keys: [
-        { ...key, id: generateId("k"), createdAt: new Date().toISOString().slice(0, 10), usedTokens: 0 },
-        ...s.keys,
-      ],
-    })),
+  updateChannel: async (input) => {
+    await safe(() => api.updateChannel(input));
+    await get().refreshChannels();
+  },
 
-  updateKey: (id, patch) =>
-    set((s) => ({ keys: s.keys.map((k) => (k.id === id ? { ...k, ...patch } : k)) })),
+  removeChannel: async (id) => {
+    await safe(() => api.deleteChannel(id));
+    await get().refreshChannels();
+  },
 
-  removeKey: (id) => set((s) => ({ keys: s.keys.filter((k) => k.id !== id) })),
+  toggleChannelStatus: async (id) => {
+    await safe(() => api.toggleChannelStatus(id));
+    await get().refreshChannels();
+  },
 
-  toggleKeyStatus: (id) =>
-    set((s) => ({
-      keys: s.keys.map((k) => (k.id === id ? { ...k, status: k.status === "active" ? "disabled" : "active" } : k)),
-    })),
+  testChannel: async (id, ok) => {
+    await safe(() => api.testChannel(id, ok));
+    await get().refreshChannels();
+  },
+
+  createKey: async (input) => {
+    const created = await safe(() => api.createKey(input));
+    await get().refreshKeys();
+    return { id: created.id, key: created.key };
+  },
+
+  removeKey: async (id) => {
+    await safe(() => api.deleteKey(id));
+    await get().refreshKeys();
+  },
+
+  toggleKeyStatus: async (id) => {
+    await safe(() => api.toggleKeyStatus(id));
+    await get().refreshKeys();
+  },
 }));
