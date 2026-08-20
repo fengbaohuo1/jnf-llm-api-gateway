@@ -28,6 +28,15 @@
     - `openai_compat.rs`：**协议基类** `OpenAiCompatible` trait（默认方法实现 OpenAI 兼容协议，`compat_*` 命名避免与 ChannelAdapter 同名冲突）
     - `openai.rs`：OpenAI 适配器（实现基类，厂商配置：默认端点 api.openai.com/v1、测试模型 gpt-3.5-turbo）
     - `deepseek.rs`：DeepSeek 适配器（实现基类，厂商配置：默认端点 api.deepseek.com、测试模型 deepseek-chat；与 OpenAI 完全独立，不引用 OpenAiAdapter）
+  - `scheduler/`：**故障转移调度器**（多渠道同模型时构建有序故障转移队列）
+    - `select_channels(pool, model) -> Vec<ChannelChoice>`：过滤（active + 模型匹配）→
+      priority 降序 → 同优先级组内 weight **无放回轮盘赌**随机排序
+    - **设计取向：没有故障就不要负载均衡**——正常请求固定走队列第一个（主渠道），
+      主渠道失败才按队列顺序尝试备用渠道（开关 `failover.enabled`，默认 true；
+      上限 `failover.max_attempts`）
+    - 渠道表新增 `priority`（越大越先）/ `weight`（组内越大越可能先被选中）字段
+    - `#![allow(dead_code)]` 待转发层调用；依赖 rand 0.9
+    - 测试：`cargo test scheduler`（内存 SQLite，5 个用例；dev-dependencies 加了 tokio）
 - `src-tauri/migrations/0001_init.sql` — 核心表结构
 
 ## 数据库架构（重要）
@@ -46,6 +55,11 @@
 - **数据层**：Zustand 动作调用 `api.ts` → invoke 后端命令 → 刷新本地状态；页面不直接碰数据库。
 - **密钥安全**：`keys` 表只存 SHA-256 哈希 + 展示前缀，完整明文仅在创建时返回一次。
 - **渠道 API Key**：存 `api_key_encrypted` 字段（当前为占位，未做真正加密，**后续需补加密**）。
+- **故障转移（调度器）设计取向（重要）**：个人网关**没有故障就不要负载均衡**——
+  正常请求固定走主渠道（优先级最高），前缀缓存 100% 命中、账单完全可预期；
+  主渠道失败才按队列顺序尝试备用渠道（多出来的渠道只用于容灾，不主动分摊流量）。
+  队列排序：过滤 → priority 降序 → 同组 weight 权重随机（无放回轮盘赌）。
+  开关 `failover.enabled`（默认 true）+ `failover.max_attempts`。详见 `scheduler/` 与笔记文档。
 - **Tailwind CSS 4**：无 tailwind.config.js，靠 `@tailwindcss/vite` + `@import "tailwindcss"` 自动扫描。
 - **路由**：集中在 `src/App.tsx`（React Router v7）。
 - **远程仓库**：Gitee 走 **HTTPS**（`https://gitee.com/jianingfei/llm-api-gateway.git`），
@@ -60,10 +74,13 @@
 ## 已知限制 / 当前进度
 - 前后端已接通，CRUD + 统计走真实 SQLite
 - 渠道测试 `test_channel` 已通过适配器**真实请求上游**（OpenAI/DeepSeek/Custom 兼容协议）
+- ✅ **故障转移调度器已实现**（`scheduler/`：过滤 + priority 降序 + 组内权重随机队列），5 个单测通过；
+  channels 表已加 priority/weight 字段；设置页有"故障转移"Tab（开关 + 最大尝试渠道数）；
+  尚未接入转发层（`select_channels` 待 chat_completion 命令调用，现标 `#![allow(dead_code)]`）
 - Claude/Gemini 适配器尚未实现（工厂返回"尚未实现"错误）
 - 网关**真实请求转发**（chat_completion 命令暴露给前端）尚未做
 - 渠道密钥存密为占位，未做真实加密
-- 下一步候选：Claude/Gemini 适配器、真实转发命令、密钥字段加密、模型级路由、流式支持
+- 下一步候选：真实转发命令（接入调度器）、Claude/Gemini 适配器、密钥字段加密、模型级路由、流式支持
 
 ## 适配器架构（重要）
 - `adapters/` 用**适配器模式**：`ChannelAdapter` trait（`#[async_trait]`）定义统一契约

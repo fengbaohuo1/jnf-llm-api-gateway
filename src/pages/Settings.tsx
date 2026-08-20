@@ -3,13 +3,14 @@ import { PageHeader, Card } from "../components/ui";
 import { Button } from "../components/Modal";
 import { api } from "../api";
 
-type TabKey = "server" | "general" | "ui" | "retry";
+type TabKey = "server" | "general" | "ui" | "retry" | "failover";
 
 const tabs: { key: TabKey; label: string }[] = [
   { key: "server", label: "服务配置" },
   { key: "general", label: "通用设置" },
   { key: "ui", label: "界面设置" },
   { key: "retry", label: "重试策略" },
+  { key: "failover", label: "故障转移" },
 ];
 
 const inputCls =
@@ -196,6 +197,43 @@ function RetryTab() {
   );
 }
 
+function FailoverTab() {
+  const enabled = useSetting("failover.enabled", "true");
+  const maxAttempts = useSetting("failover.max_attempts", "3");
+  const [saved, setSaved] = useState(false);
+  const saveAll = async () => {
+    await Promise.all([enabled.save(), maxAttempts.save()]);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
+  };
+  return (
+    <Card>
+      <h3 className="mb-2 text-sm font-semibold text-gray-700">多渠道容灾</h3>
+      <div className="divide-y divide-gray-100">
+        <Row
+          label="启用故障转移"
+          desc="正常请求固定走主渠道（优先级最高）；主渠道失败时按队列顺序尝试备用渠道。关闭则失败即报错"
+        >
+          <Toggle checked={enabled.value === "true"} onChange={(v) => enabled.setValue(String(v))} />
+        </Row>
+        <Row label="最大尝试渠道数" desc="包括主渠道在内，最多尝试几个渠道（1 = 不转移）">
+          <input
+            value={maxAttempts.value ?? ""}
+            onChange={(e) => maxAttempts.setValue(e.target.value)}
+            className={inputCls}
+            type="number"
+            min={1}
+          />
+        </Row>
+      </div>
+      <div className="mt-4 flex items-center justify-end gap-3">
+        {saved && <span className="text-xs text-green-600">已保存</span>}
+        <Button onClick={saveAll}>保存故障转移设置</Button>
+      </div>
+    </Card>
+  );
+}
+
 export function Settings() {
   const [tab, setTab] = useState<TabKey>("server");
   return (
@@ -218,6 +256,7 @@ export function Settings() {
       {tab === "general" && <GeneralTab />}
       {tab === "ui" && <UiTab />}
       {tab === "retry" && <RetryTab />}
+      {tab === "failover" && <FailoverTab />}
     </div>
   );
 }

@@ -14,9 +14,11 @@ type FormState = {
   model: string;
   apiKey: string;
   status: ChannelStatus;
+  priority: number;
+  weight: number;
 };
 
-const emptyForm: FormState = { name: "", type: "OpenAI", baseUrl: "", model: "", apiKey: "", status: "active" };
+const emptyForm: FormState = { name: "", type: "OpenAI", baseUrl: "", model: "", apiKey: "", status: "active", priority: 0, weight: 1 };
 
 const inputCls =
   "w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
@@ -102,6 +104,26 @@ function ChannelFormModal({
             </select>
           </Field>
         </div>
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="优先级" hint="故障转移时越大的越先尝试（主渠道 = 最高优先级）">
+            <input
+              value={form.priority}
+              onChange={(e) => setForm((f) => ({ ...f, priority: Number(e.target.value) || 0 }))}
+              className={inputCls}
+              type="number"
+              placeholder="0"
+            />
+          </Field>
+          <Field label="权重" hint="同优先级内越大越可能被先选中">
+            <input
+              value={form.weight}
+              onChange={(e) => setForm((f) => ({ ...f, weight: Number(e.target.value) || 0 }))}
+              className={inputCls}
+              type="number"
+              placeholder="1"
+            />
+          </Field>
+        </div>
         <Field label="API Key" hint={initial ? "留空则保持不变" : undefined}>
           <input
             value={form.apiKey}
@@ -178,6 +200,8 @@ export function Channels() {
           model: data.model,
           status: data.status,
           apiKey: data.apiKey,
+          priority: data.priority,
+          weight: data.weight,
         });
       } else {
         await addChannel({
@@ -186,6 +210,8 @@ export function Channels() {
           baseUrl: data.baseUrl,
           model: data.model,
           apiKey: data.apiKey,
+          priority: data.priority,
+          weight: data.weight,
         });
       }
       setModalOpen(false);
@@ -283,6 +309,7 @@ export function Channels() {
               <th className="px-4 py-3 font-medium">名称</th>
               <th className="px-4 py-3 font-medium">类型</th>
               <th className="px-4 py-3 font-medium">模型</th>
+              <th className="px-4 py-3 font-medium">优先级</th>
               <th className="px-4 py-3 font-medium">状态</th>
               <th className="px-4 py-3 font-medium">延迟</th>
               <th className="px-4 py-3 font-medium">创建时间</th>
@@ -300,6 +327,10 @@ export function Channels() {
                   <ChannelTypeBadge type={c.type} />
                 </td>
                 <td className="px-4 py-3 text-gray-600">{c.model || "—"}</td>
+                <td className="px-4 py-3 text-gray-600">
+                  <span className="font-medium text-gray-700">{c.priority}</span>
+                  <span className="text-xs text-gray-400"> / {c.weight}</span>
+                </td>
                 <td className="px-4 py-3">
                   <button onClick={() => handleToggle(c)} title="点击切换状态">
                     <StatusBadge status={c.status} />
@@ -327,7 +358,7 @@ export function Channels() {
             ))}
             {!loadingChannels && filtered.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-400">
+                <td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-400">
                   {channels.length === 0 ? "暂无渠道，点击右上角添加" : "没有符合筛选条件的渠道"}
                 </td>
               </tr>
@@ -345,6 +376,8 @@ export function Channels() {
           model: editing.model,
           apiKey: "",
           status: editing.status,
+          priority: editing.priority,
+          weight: editing.weight,
         } : null}
         onClose={() => setModalOpen(false)}
         onSubmit={handleSubmit}

@@ -13,6 +13,8 @@ export interface Channel {
   status: ChannelStatus;
   apiKeyMasked: string;
   latencyMs: number | null;
+  priority: number; // 故障转移优先级，越大越先
+  weight: number; // 同优先级权重，越大越可能先被选中
   createdAt: string;
 }
 

@@ -20,6 +20,8 @@ interface AppState {
     baseUrl: string;
     model: string;
     apiKey: string;
+    priority: number;
+    weight: number;
   }) => Promise<void>;
   updateChannel: (input: {
     id: string;
@@ -29,6 +31,8 @@ interface AppState {
     model: string;
     status: ChannelStatus;
     apiKey: string;
+    priority: number;
+    weight: number;
   }) => Promise<void>;
   removeChannel: (id: string) => Promise<void>;
   toggleChannelStatus: (id: string) => Promise<void>;
@@ -101,7 +105,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     await safe(() => api.createChannel({ ...input, status: "active" }));
     await get().refreshChannels();
   },
-
   updateChannel: async (input) => {
     await safe(() => api.updateChannel(input));
     await get().refreshChannels();

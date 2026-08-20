@@ -11,6 +11,8 @@ const mapChannel = (c: RawChannel): Channel => ({
   status: c.status as ChannelStatus,
   apiKeyMasked: c.apiKeyMasked,
   latencyMs: c.latencyMs ?? null,
+  priority: c.priority,
+  weight: c.weight,
   createdAt: c.createdAt,
 });
 
@@ -49,6 +51,8 @@ export const api = {
     model: string;
     apiKey: string;
     status: string;
+    priority: number;
+    weight: number;
   }): Promise<Channel> => {
     const c = await invoke<RawChannel>("create_channel", { ...input });
     return mapChannel(c);
@@ -62,6 +66,8 @@ export const api = {
     model: string;
     status: string;
     apiKey: string;
+    priority: number;
+    weight: number;
   }): Promise<void> => invoke("update_channel", { ...input }),
 
   deleteChannel: (id: string) => invoke("delete_channel", { id }),
@@ -105,6 +111,8 @@ interface RawChannel {
   status: string;
   apiKeyMasked: string;
   latencyMs: number | null;
+  priority: number;
+  weight: number;
   createdAt: string;
 }
 interface RawKey {
