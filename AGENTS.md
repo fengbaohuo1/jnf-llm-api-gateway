@@ -25,8 +25,9 @@
     - `channels.rs` / `keys.rs` / `requests.rs` / `settings.rs` / `stats.rs`
   - `adapters/`：**LLM 渠道协议适配器（适配器模式）**
     - `mod.rs`：`ChannelAdapter` trait（async_trait）+ 统一 `ChatRequest/ChatResponse/TestResult` + 工厂 `create_adapter`
-    - `openai.rs`：OpenAI 兼容协议适配器（覆盖 OpenAI/Custom）
-    - `deepseek.rs`：DeepSeek 适配器（组合复用 OpenAiAdapter，默认端点 api.deepseek.com、测试模型 deepseek-chat）
+    - `openai_compat.rs`：**协议基类** `OpenAiCompatible` trait（默认方法实现 OpenAI 兼容协议，`compat_*` 命名避免与 ChannelAdapter 同名冲突）
+    - `openai.rs`：OpenAI 适配器（实现基类，厂商配置：默认端点 api.openai.com/v1、测试模型 gpt-3.5-turbo）
+    - `deepseek.rs`：DeepSeek 适配器（实现基类，厂商配置：默认端点 api.deepseek.com、测试模型 deepseek-chat；与 OpenAI 完全独立，不引用 OpenAiAdapter）
 - `src-tauri/migrations/0001_init.sql` — 核心表结构
 
 ## 数据库架构（重要）
@@ -70,8 +71,12 @@
 - 统一模型：`ChatRequest`（model/messages/temperature/max_tokens/stream）、
   `ChatResponse`（id/model/content/usage/latency_ms）、`TestResult`。
 - 工厂 `create_adapter(channel_type, base_url, api_key)`：OpenAI/Custom →
-  `OpenAiAdapter`；DeepSeek → `DeepSeekAdapter`（组合复用 OpenAI 协议逻辑）；
-  Claude/Gemini 待实现。
+  `OpenAiAdapter`；DeepSeek → `DeepSeekAdapter`（各自实现 `OpenAiCompatible` 基类，
+  独立类型互不引用）；Claude/Gemini 待实现。
+- `OpenAiCompatible` 是"协议基类"（Rust 无继承，用 trait 默认方法实现）：各厂商适配器
+  只需提供厂商配置（默认端点/默认模型/密钥/客户端）即获得完整 OpenAI 兼容协议实现。
+- 协议基类方法用 `compat_*` 命名（`compat_chat_completion`/`compat_test`），
+  避免与 `ChannelAdapter` 同名方法在 supertrait 场景下的调用歧义（E0034）。
 - HTTP 客户端 `reqwest`（rustls-tls）；错误统一为 `AdapterError`（thiserror）。
 - 注意：Rust 2021 edition 下 trait 的 `async fn` 不能直接用作 `dyn` trait object，
   必须用 `async-trait` crate。

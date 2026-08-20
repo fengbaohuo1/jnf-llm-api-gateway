@@ -1,5 +1,6 @@
 pub mod deepseek;
 pub mod openai;
+pub mod openai_compat;
 
 use std::time::Duration;
 
@@ -79,7 +80,10 @@ pub trait ChannelAdapter: Send + Sync {
     /// 上游 Base URL
     fn base_url(&self) -> &str;
 
-    /// 聊天补全（非流式）
+    /// 聊天补全（非流式）。
+    /// 注：当前仅 test_channel 调用 `test()`；`chat_completion` 是网关转发层的契约方法，
+    /// 转发命令实现后会使用，届时移除本标注。
+    #[allow(dead_code)]
     async fn chat_completion(&self, req: ChatRequest) -> Result<ChatResponse, AdapterError>;
 
     /// 连通性测试：发送一个最小请求验证密钥/端点/模型是否可用
