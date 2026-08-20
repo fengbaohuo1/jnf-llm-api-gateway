@@ -2380,6 +2380,7 @@ name = "llm-api-gateway"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "rand 0.9.5",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -2395,6 +2396,7 @@ dependencies = [
  "tauri-plugin-shell",
  "tauri-plugin-store",
  "thiserror 2.0.20",
+ "tokio",
  "uuid",
 ]
 

@@ -13,6 +13,8 @@ pub struct Channel {
     pub status: String,
     pub api_key_masked: String,
     pub latency_ms: Option<i64>,
+    pub priority: i64,
+    pub weight: i64,
     pub created_at: String,
 }
 

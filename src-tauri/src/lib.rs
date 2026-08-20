@@ -2,6 +2,7 @@ mod adapters;
 mod commands;
 mod db;
 mod models;
+mod scheduler;
 
 use tauri::Manager;
 use tauri_plugin_autostart::MacosLauncher;
