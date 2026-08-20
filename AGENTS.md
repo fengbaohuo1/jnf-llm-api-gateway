@@ -23,6 +23,10 @@
   - `commands/`：所有 `#[tauri::command]` CRUD 命令
     - `mod.rs`：`DbState`（含 `pool()` 访问器）+ 公共辅助函数
     - `channels.rs` / `keys.rs` / `requests.rs` / `settings.rs` / `stats.rs`
+  - `adapters/`：**LLM 渠道协议适配器（适配器模式）**
+    - `mod.rs`：`ChannelAdapter` trait（async_trait）+ 统一 `ChatRequest/ChatResponse/TestResult` + 工厂 `create_adapter`
+    - `openai.rs`：OpenAI 兼容协议适配器（覆盖 OpenAI/Custom）
+    - `deepseek.rs`：DeepSeek 适配器（组合复用 OpenAiAdapter，默认端点 api.deepseek.com、测试模型 deepseek-chat）
 - `src-tauri/migrations/0001_init.sql` — 核心表结构
 
 ## 数据库架构（重要）
@@ -54,9 +58,23 @@
 
 ## 已知限制 / 当前进度
 - 前后端已接通，CRUD + 统计走真实 SQLite
-- 渠道测试命令 `test_channel` 为模拟（随机延迟/概率），未真正请求上游
+- 渠道测试 `test_channel` 已通过适配器**真实请求上游**（OpenAI/DeepSeek/Custom 兼容协议）
+- Claude/Gemini 适配器尚未实现（工厂返回"尚未实现"错误）
+- 网关**真实请求转发**（chat_completion 命令暴露给前端）尚未做
 - 渠道密钥存密为占位，未做真实加密
-- 下一步候选：真实代理转发、渠道测试真实连通、密钥字段加密、模型级路由
+- 下一步候选：Claude/Gemini 适配器、真实转发命令、密钥字段加密、模型级路由、流式支持
+
+## 适配器架构（重要）
+- `adapters/` 用**适配器模式**：`ChannelAdapter` trait（`#[async_trait]`）定义统一契约
+  （`chat_completion` / `test`），各厂商协议差异封装在各自实现里。
+- 统一模型：`ChatRequest`（model/messages/temperature/max_tokens/stream）、
+  `ChatResponse`（id/model/content/usage/latency_ms）、`TestResult`。
+- 工厂 `create_adapter(channel_type, base_url, api_key)`：OpenAI/Custom →
+  `OpenAiAdapter`；DeepSeek → `DeepSeekAdapter`（组合复用 OpenAI 协议逻辑）；
+  Claude/Gemini 待实现。
+- HTTP 客户端 `reqwest`（rustls-tls）；错误统一为 `AdapterError`（thiserror）。
+- 注意：Rust 2021 edition 下 trait 的 `async fn` 不能直接用作 `dyn` trait object，
+  必须用 `async-trait` crate。
 
 ## 踩坑备忘
 - `tsconfig.json` 开了 `strict` + `noUnusedLocals` + `noUnusedParameters`，

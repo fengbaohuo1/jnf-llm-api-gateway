@@ -117,19 +117,49 @@ pub async fn toggle_channel_status(state: State<'_, DbState>, id: String) -> Res
 }
 
 #[tauri::command]
-pub async fn test_channel(state: State<'_, DbState>, id: String, ok: bool) -> Result<(), String> {
-    let t = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .subsec_nanos();
-    let latency: Option<i64> = if ok { Some((t % 600 + 300) as i64) } else { None };
-    sqlx::query("UPDATE channels SET status = ?2, latency_ms = ?3, updated_at = ?4 WHERE id = ?1")
-        .bind(id)
-        .bind(if ok { "active" } else { "error" })
-        .bind(latency)
-        .bind(now_iso())
-        .execute(pool(&state))
-        .await
+pub async fn test_channel(state: State<'_, DbState>, id: String) -> Result<serde_json::Value, String> {
+    // 1. 从数据库读取渠道配置
+    let row: Option<(String, String, String, String)> = sqlx::query_as(
+        "SELECT type, base_url, api_key_encrypted, model FROM channels WHERE id = ?1",
+    )
+    .bind(&id)
+    .fetch_optional(pool(&state))
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let Some((ctype, base_url, api_key, model)) = row else {
+        return Err("渠道不存在".into());
+    };
+
+    // 2. 创建适配器并真实测试
+    let adapter = crate::adapters::create_adapter(&ctype, &base_url, &api_key)
         .map_err(|e| e.to_string())?;
-    Ok(())
+    let result = adapter.test().await.map_err(|e| e.to_string())?;
+
+    // 3. 更新渠道状态与延迟
+    if result.ok {
+        let latency: Option<i64> = result.latency_ms.map(|v| v as i64);
+        sqlx::query("UPDATE channels SET status = 'active', latency_ms = ?2, updated_at = ?3 WHERE id = ?1")
+            .bind(&id)
+            .bind(latency)
+            .bind(now_iso())
+            .execute(pool(&state))
+            .await
+            .map_err(|e| e.to_string())?;
+    } else {
+        sqlx::query("UPDATE channels SET status = 'error', latency_ms = NULL, updated_at = ?2 WHERE id = ?1")
+            .bind(&id)
+            .bind(now_iso())
+            .execute(pool(&state))
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(serde_json::json!({
+        "ok": result.ok,
+        "latencyMs": result.latency_ms,
+        "message": result.message,
+        "model": model,
+        "protocol": adapter.channel_type(),
+    }))
 }

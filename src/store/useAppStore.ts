@@ -32,7 +32,7 @@ interface AppState {
   }) => Promise<void>;
   removeChannel: (id: string) => Promise<void>;
   toggleChannelStatus: (id: string) => Promise<void>;
-  testChannel: (id: string, ok: boolean) => Promise<void>;
+  testChannel: (id: string) => Promise<{ ok: boolean; latencyMs: number | null; message: string; model: string }>;
 
   createKey: (input: { name: string; quotaLimit: number; expiresAt: string | null }) => Promise<{
     id: string;
@@ -117,9 +117,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     await get().refreshChannels();
   },
 
-  testChannel: async (id, ok) => {
-    await safe(() => api.testChannel(id, ok));
+  testChannel: async (id) => {
+    const result = await safe(() => api.testChannel(id));
     await get().refreshChannels();
+    return result;
   },
 
   createKey: async (input) => {

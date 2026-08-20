@@ -155,13 +155,14 @@ export function Channels() {
     setModalOpen(false);
   };
 
-  const handleTest = (id: string) => {
+  const handleTest = async (id: string) => {
     setTestMsg((m) => ({ ...m, [id]: "测试中…" }));
-    setTimeout(() => {
-      testChannel(id, Math.random() > 0.2)
-        .then(() => setTestMsg((m) => ({ ...m, [id]: "✅ 连接正常" })))
-        .catch(() => setTestMsg((m) => ({ ...m, [id]: "❌ 连接失败" })));
-    }, 600);
+    try {
+      const r = await testChannel(id);
+      setTestMsg((m) => ({ ...m, [id]: r.ok ? `✅ ${r.message}` : `❌ ${r.message}` }));
+    } catch (e) {
+      setTestMsg((m) => ({ ...m, [id]: `❌ ${e instanceof Error ? e.message : String(e)}` }));
+    }
   };
 
   return (

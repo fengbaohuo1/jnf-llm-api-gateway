@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# Database files (runtime-generated, never commit)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

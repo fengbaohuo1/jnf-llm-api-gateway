@@ -66,7 +66,8 @@ export const api = {
 
   deleteChannel: (id: string) => invoke("delete_channel", { id }),
   toggleChannelStatus: (id: string) => invoke("toggle_channel_status", { id }),
-  testChannel: (id: string, ok: boolean) => invoke("test_channel", { id, ok }),
+  testChannel: (id: string) =>
+    invoke<{ ok: boolean; latencyMs: number | null; message: string; model: string }>("test_channel", { id }),
 
   // ---- Keys ----
   listKeys: async (): Promise<ApiKey[]> =>

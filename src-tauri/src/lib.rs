@@ -1,3 +1,4 @@
+mod adapters;
 mod commands;
 mod db;
 mod models;
