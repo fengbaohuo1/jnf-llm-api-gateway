@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Pencil, Plus, Trash2, Cable } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Pencil, Plus, Trash2, Cable, Search } from "lucide-react";
 import { channelTypes } from "../data/mock";
 import type { Channel, ChannelStatus, ChannelType } from "../types";
 import { useAppStore } from "../store/useAppStore";
@@ -18,16 +18,31 @@ type FormState = {
 
 const emptyForm: FormState = { name: "", type: "OpenAI", baseUrl: "", model: "", apiKey: "", status: "active" };
 
+const inputCls =
+  "w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
+
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-sm font-medium text-gray-700">{label}</span>
+      {children}
+      {hint && <span className="mt-0.5 block text-xs text-gray-400">{hint}</span>}
+    </label>
+  );
+}
+
 function ChannelFormModal({
   open,
   initial,
   onClose,
   onSubmit,
+  submitting,
 }: {
   open: boolean;
   initial: FormState | null;
   onClose: () => void;
-  onSubmit: (data: FormState) => void;
+  onSubmit: (data: FormState) => Promise<void>;
+  submitting: boolean;
 }) {
   const [form, setForm] = useState<FormState>(initial ?? emptyForm);
 
@@ -64,8 +79,16 @@ function ChannelFormModal({
             </select>
           </Field>
         </div>
-        <Field label="Base URL">
-          <input required value={form.baseUrl} onChange={set("baseUrl")} className={inputCls} placeholder="https://api.openai.com/v1" />
+        <Field label="Base URL" hint="必须以 http:// 或 https:// 开头">
+          <input
+            required
+            value={form.baseUrl}
+            onChange={set("baseUrl")}
+            className={inputCls}
+            placeholder="https://api.openai.com/v1"
+            pattern="https?://.+"
+            title="请输入合法的 http(s) 地址"
+          />
         </Field>
         <div className="grid grid-cols-2 gap-4">
           <Field label="默认模型">
@@ -84,31 +107,20 @@ function ChannelFormModal({
             value={form.apiKey}
             onChange={set("apiKey")}
             className={inputCls}
-            placeholder={initial ? "••••••••" : "sk-... / AIza..."}
+            placeholder={initial ? "••••••••（留空保持不变）" : "sk-... / AIza..."}
             type="password"
           />
         </Field>
         <div className="flex justify-end gap-2 pt-2">
-          <Button variant="secondary" onClick={onClose}>
+          <Button variant="secondary" onClick={onClose} disabled={submitting}>
             取消
           </Button>
-          <Button type="submit">{initial ? "保存" : "创建"}</Button>
+          <Button type="submit" disabled={submitting}>
+            {submitting ? "提交中…" : initial ? "保存" : "创建"}
+          </Button>
         </div>
       </form>
     </Modal>
-  );
-}
-
-const inputCls =
-  "w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
-
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-sm font-medium text-gray-700">{label}</span>
-      {children}
-      {hint && <span className="mt-0.5 block text-xs text-gray-400">{hint}</span>}
-    </label>
   );
 }
 
@@ -118,10 +130,31 @@ export function Channels() {
   const [editing, setEditing] = useState<Channel | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Channel | null>(null);
   const [testMsg, setTestMsg] = useState<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // 筛选
+  const [keyword, setKeyword] = useState("");
+  const [typeFilter, setTypeFilter] = useState("全部");
+  const [statusFilter, setStatusFilter] = useState("全部");
 
   useEffect(() => {
     refreshChannels();
   }, [refreshChannels]);
+
+  const filtered = useMemo(() => {
+    const kw = keyword.trim().toLowerCase();
+    return channels.filter((c) => {
+      const matchKw =
+        !kw ||
+        c.name.toLowerCase().includes(kw) ||
+        c.baseUrl.toLowerCase().includes(kw) ||
+        c.model.toLowerCase().includes(kw);
+      const matchType = typeFilter === "全部" || c.type === typeFilter;
+      const matchStatus = statusFilter === "全部" || c.status === statusFilter;
+      return matchKw && matchType && matchStatus;
+    });
+  }, [channels, keyword, typeFilter, statusFilter]);
 
   const openAdd = () => {
     setEditing(null);
@@ -133,26 +166,34 @@ export function Channels() {
   };
 
   const handleSubmit = async (data: FormState) => {
-    if (editing) {
-      await updateChannel({
-        id: editing.id,
-        name: data.name,
-        type: data.type,
-        baseUrl: data.baseUrl,
-        model: data.model,
-        status: data.status,
-        apiKey: data.apiKey,
-      });
-    } else {
-      await addChannel({
-        name: data.name,
-        type: data.type,
-        baseUrl: data.baseUrl,
-        model: data.model,
-        apiKey: data.apiKey,
-      });
+    setSubmitting(true);
+    setError(null);
+    try {
+      if (editing) {
+        await updateChannel({
+          id: editing.id,
+          name: data.name,
+          type: data.type,
+          baseUrl: data.baseUrl,
+          model: data.model,
+          status: data.status,
+          apiKey: data.apiKey,
+        });
+      } else {
+        await addChannel({
+          name: data.name,
+          type: data.type,
+          baseUrl: data.baseUrl,
+          model: data.model,
+          apiKey: data.apiKey,
+        });
+      }
+      setModalOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
     }
-    setModalOpen(false);
   };
 
   const handleTest = async (id: string) => {
@@ -162,6 +203,27 @@ export function Channels() {
       setTestMsg((m) => ({ ...m, [id]: r.ok ? `✅ ${r.message}` : `❌ ${r.message}` }));
     } catch (e) {
       setTestMsg((m) => ({ ...m, [id]: `❌ ${e instanceof Error ? e.message : String(e)}` }));
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!confirmDelete) return;
+    setError(null);
+    try {
+      await removeChannel(confirmDelete.id);
+      setConfirmDelete(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setConfirmDelete(null);
+    }
+  };
+
+  const handleToggle = async (c: Channel) => {
+    setError(null);
+    try {
+      await toggleChannelStatus(c.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -177,6 +239,43 @@ export function Channels() {
         }
       />
 
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
+      <Card className="mb-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+          <div className="relative sm:col-span-2">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+              className={`${inputCls} pl-9`}
+              placeholder="按名称 / Base URL / 模型搜索"
+            />
+          </div>
+          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className={inputCls}>
+            <option value="全部">全部类型</option>
+            {channelTypes.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={inputCls}>
+            <option value="全部">全部状态</option>
+            <option value="active">启用</option>
+            <option value="disabled">停用</option>
+            <option value="error">异常</option>
+          </select>
+        </div>
+        <p className="mt-3 text-xs text-gray-400">
+          共 {filtered.length} 个渠道{channels.length !== filtered.length && `（已筛选，全部 ${channels.length}）`}
+        </p>
+      </Card>
+
       <Card className="p-0 overflow-hidden">
         <table className="w-full text-left text-sm">
           <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500">
@@ -191,7 +290,7 @@ export function Channels() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {channels.map((c) => (
+            {filtered.map((c) => (
               <tr key={c.id} className="hover:bg-gray-50">
                 <td className="px-4 py-3">
                   <p className="font-medium text-gray-900">{c.name}</p>
@@ -202,7 +301,7 @@ export function Channels() {
                 </td>
                 <td className="px-4 py-3 text-gray-600">{c.model || "—"}</td>
                 <td className="px-4 py-3">
-                  <button onClick={() => toggleChannelStatus(c.id)} title="点击切换状态">
+                  <button onClick={() => handleToggle(c)} title="点击切换状态">
                     <StatusBadge status={c.status} />
                   </button>
                 </td>
@@ -226,10 +325,10 @@ export function Channels() {
                 </td>
               </tr>
             ))}
-            {!loadingChannels && channels.length === 0 && (
+            {!loadingChannels && filtered.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-400">
-                  暂无渠道，点击右上角添加
+                  {channels.length === 0 ? "暂无渠道，点击右上角添加" : "没有符合筛选条件的渠道"}
                 </td>
               </tr>
             )}
@@ -249,6 +348,7 @@ export function Channels() {
         } : null}
         onClose={() => setModalOpen(false)}
         onSubmit={handleSubmit}
+        submitting={submitting}
       />
 
       <Modal open={!!confirmDelete} title="删除渠道" onClose={() => setConfirmDelete(null)}>
@@ -259,13 +359,7 @@ export function Channels() {
           <Button variant="secondary" onClick={() => setConfirmDelete(null)}>
             取消
           </Button>
-          <Button
-            variant="danger"
-            onClick={() => {
-              if (confirmDelete) removeChannel(confirmDelete.id);
-              setConfirmDelete(null);
-            }}
-          >
+          <Button variant="danger" onClick={handleDelete}>
             <Trash2 size={15} className="mr-1 inline" /> 删除
           </Button>
         </div>
