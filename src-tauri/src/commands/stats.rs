@@ -3,7 +3,8 @@ use tauri::State;
 use crate::commands::DbState;
 use crate::models::DailyStat;
 
-use super::{pool, today_iso};
+use super::util::today_iso;
+use super::pool;
 
 #[tauri::command]
 pub async fn list_daily_stats(state: State<'_, DbState>, limit: Option<i64>) -> Result<Vec<DailyStat>, String> {

@@ -4,7 +4,8 @@ use tauri::State;
 use crate::commands::DbState;
 use crate::models::RequestLog;
 
-use super::{new_id, now_iso, pool, today_iso};
+use super::util::{new_id, now_iso, today_iso};
+use super::pool;
 
 #[tauri::command]
 pub async fn list_requests(

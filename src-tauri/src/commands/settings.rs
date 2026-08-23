@@ -3,7 +3,8 @@ use tauri::State;
 use crate::commands::DbState;
 use crate::models::Setting;
 
-use super::{now_iso, pool};
+use super::util::now_iso;
+use super::pool;
 
 #[tauri::command]
 pub async fn list_settings(state: State<'_, DbState>) -> Result<Vec<Setting>, String> {

@@ -3,7 +3,8 @@ use tauri::State;
 use crate::commands::DbState;
 use crate::models::{ApiKey, CreatedKey};
 
-use super::{gen_key_secret, hash_key, new_id, now_iso, pool};
+use super::util::{gen_key_secret, hash_key, new_id, now_iso};
+use super::pool;
 
 #[tauri::command]
 pub async fn list_keys(state: State<'_, DbState>) -> Result<Vec<ApiKey>, String> {

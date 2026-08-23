@@ -3,7 +3,8 @@ use tauri::State;
 use crate::commands::DbState;
 use crate::models::Channel;
 
-use super::{mask, new_id, now_iso, pool};
+use super::util::{mask, new_id, now_iso};
+use super::pool;
 
 #[tauri::command]
 pub async fn list_channels(state: State<'_, DbState>) -> Result<Vec<Channel>, String> {
