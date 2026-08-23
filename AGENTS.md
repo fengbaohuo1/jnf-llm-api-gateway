@@ -42,12 +42,16 @@
     - 命中后替换为 `[MASKED:<rule_id>]`；`security.mode`：replace（脱敏后转发，默认）/ block（high 风险拦截）
     - 测试：`cargo test security`（6 个用例）
   - `proxy/`：**转发代理（axum 本地 HTTP 服务）**
+    - 路由：`POST /v1/chat/completions`（非流式/流式按 body.stream 分流）、`GET /v1/models`（聚合启用渠道的模型）、`GET /health`（免鉴权探活）
     - `POST http://127.0.0.1:{server.port}/v1/chat/completions`，随应用启动常驻
     - 完整链路：鉴权（Bearer sk-llmapi-* → hash 查 keys → 状态/过期/配额）→
       请求侧安全扫描 → `select_channels` 选队列 → **透传转发**（请求体原样发上游，只改 URL/Authorization，保留 tools 等扩展字段）→
       故障转移循环（5xx/429/超时/网络可转移，4xx 直接返回）→ 响应侧安全扫描 → 安全结果合并落库 → 记账
+    - **SSE 流式**：透传上游事件流（行缓冲 SseLineSplitter），注入 `stream_options.include_usage` 拿精确 token 统计，
+      无 usage 时本地估算兜底（1 token ≈ 4 ASCII 字符 或 1.5 非 ASCII 字符）；delta 逐条脱敏；
+      流结束记账（成功 status=1 / 中断 status=0 但按已收内容计费）；流客户端用独立长超时 `stream_client`（600s）
     - 记账：`commands::requests::log_request`（proxy 与 insert_request 命令共用），成本 = total_tokens/1000 × 渠道单价
-    - 错误统一 OpenAI 兼容格式 `{"error": {message, type, code}}`；stream=true 暂返回 400
+    - 错误统一 OpenAI 兼容格式 `{"error": {message, type, code}}`
 - `src-tauri/migrations/` — 0001 五表 + 0002 priority/weight + 0003 单价与 security_logs
 
 ## 数据库架构（重要）
@@ -80,7 +84,7 @@
   - 安全扫描（security/）：请求侧脱敏后转发、响应侧脱敏后返回，两侧 findings 合并写入 security_logs；
     `security.mode`：replace（默认，脱敏后照常）/ block（high 风险拦截）。
   - 记账：成功才扣配额与计费（成本 = total_tokens/1000 × 渠道单价），失败尝试也记 requests 日志（status=0，error 注明第几次尝试/转移）。
-  - stream=true 第一版返回 400 不支持。
+  - SSE 流式：透传 + 注入 stream_options.include_usage 拿精确统计（无 usage 时估算兜底），delta 逐条脱敏，流结束记账；流开始前失败可转移，流开始后中断不可转移。
 - **Tailwind CSS 4**：无 tailwind.config.js，靠 `@tailwindcss/vite` + `@import "tailwindcss"` 自动扫描。
 - **路由**：集中在 `src/App.tsx`（React Router v7）。
 - **远程仓库**：Gitee 走 **HTTPS**（`https://gitee.com/jianingfei/llm-api-gateway.git`），
@@ -97,14 +101,16 @@
 - 渠道测试 `test_channel` 已通过适配器**真实请求上游**（OpenAI/DeepSeek/Custom 兼容协议）
 - ✅ **转发代理已实现**（`proxy/`：axum 本地 HTTP 服务，鉴权 → 请求侧安全扫描 → 调度器 →
   透传转发 + 故障转移循环 → 响应侧安全扫描合并 → 记账），随应用启动常驻 127.0.0.1:8787
+- ✅ **SSE 流式已实现**：透传 + token 统计（精确 usage 优先/估算兜底）+ delta 脱敏 + 流结束记账
+- ✅ **/v1/models 与 /health 路由已实现**（26 个单测全绿）
 - ✅ **安全模块已实现**（`security/`：SecurityScanner trait + RuleScanner 内置规则集，6 个单测通过）
 - ✅ **故障转移调度器已接入转发层**（`select_channels` 由 proxy 每次请求调用），5 个单测通过
 - ✅ channels 表已加 priority/weight/price_per_1k_tokens；设置页有"故障转移"与"代理与安全"Tab
 - ✅ 记账统一走 `commands::requests::log_request`（proxy 与 insert_request 命令共用）
 - Claude/Gemini 适配器尚未实现（工厂返回"尚未实现"错误）
 - 渠道密钥存密为占位，未做真实加密
-- 流式 SSE 未做（stream=true 返回 400）；模型级路由未做（渠道单 model 字段 + 调度器过滤已覆盖）
-- 下一步候选：Claude/Gemini 适配器（原生协议转换）、流式支持、渠道密钥真实加密、安全规则可配置化、日志页安全事件展示
+- 模型级路由未做（渠道单 model 字段 + 调度器过滤已覆盖）
+- 下一步候选：Claude/Gemini 适配器（原生协议转换）、渠道密钥真实加密、安全规则可配置化、日志页安全事件展示、前端代理状态页
 
 ## 适配器架构（重要）
 - `adapters/` 用**适配器模式**：`ChannelAdapter` trait（`#[async_trait]`）定义统一契约
