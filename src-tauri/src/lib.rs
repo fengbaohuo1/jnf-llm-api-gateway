@@ -2,7 +2,11 @@ mod adapters;
 mod commands;
 mod db;
 mod models;
+mod proxy;
 mod scheduler;
+mod security;
+
+use std::sync::Arc;
 
 use tauri::Manager;
 use tauri_plugin_autostart::MacosLauncher;
@@ -30,7 +34,13 @@ pub fn run() {
             std::fs::create_dir_all(&dir).ok();
             let db_path = dir.join("llm_gateway.db");
             let pool = tauri::async_runtime::block_on(db::init(&db_path))?;
-            app.manage(DbState(pool));
+            app.manage(DbState(pool.clone()));
+
+            // 启动转发代理（本地 HTTP 服务，端口取 settings server.port）
+            tauri::async_runtime::spawn(async move {
+                proxy::serve(pool, Arc::new(security::RuleScanner::new())).await;
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -49,6 +59,8 @@ pub fn run() {
             // requests
             commands::requests::list_requests,
             commands::requests::insert_request,
+            // security
+            commands::security::list_security_logs,
             // settings
             commands::settings::list_settings,
             commands::settings::set_setting,

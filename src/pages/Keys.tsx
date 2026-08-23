@@ -116,7 +116,7 @@ export function Keys() {
     <div>
       <PageHeader
         title="密钥"
-        description="管理网关接入密钥（sk-waliapi-*）"
+        description="管理网关接入密钥（sk-llmapi-*）"
         actions={
           <Button onClick={() => setModalOpen(true)}>
             <Plus size={16} className="mr-1 inline" /> 创建密钥

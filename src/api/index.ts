@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ApiKey, Channel, ChannelStatus, ChannelType, RequestLog } from "../types";
+import type { ApiKey, Channel, ChannelStatus, ChannelType, RequestLog, SecurityLog } from "../types";
 
 // 后端命令返回的字段是 camelCase；这里映射回前端结构。
 const mapChannel = (c: RawChannel): Channel => ({
@@ -13,13 +13,15 @@ const mapChannel = (c: RawChannel): Channel => ({
   latencyMs: c.latencyMs ?? null,
   priority: c.priority,
   weight: c.weight,
+  pricePer1kTokens: c.pricePer1kTokens,
   createdAt: c.createdAt,
 });
 
 const mapKey = (k: RawKey): ApiKey => ({
   id: k.id,
   name: k.name,
-  key: k.keyPrefix ? `sk-waliapi-${k.keyPrefix}` : "",
+  // key_prefix 已是含前缀的完整开头（如 sk-llmapi-1a2b...），直接展示，不再重复拼接
+  key: k.keyPrefix,
   status: k.status as ApiKey["status"],
   quotaLimit: k.quotaLimit,
   usedTokens: k.usedTokens,
@@ -53,6 +55,7 @@ export const api = {
     status: string;
     priority: number;
     weight: number;
+    pricePer1kTokens: number;
   }): Promise<Channel> => {
     const c = await invoke<RawChannel>("create_channel", { ...input });
     return mapChannel(c);
@@ -68,6 +71,7 @@ export const api = {
     apiKey: string;
     priority: number;
     weight: number;
+    pricePer1kTokens: number;
   }): Promise<void> => invoke("update_channel", { ...input }),
 
   deleteChannel: (id: string) => invoke("delete_channel", { id }),
@@ -89,6 +93,21 @@ export const api = {
   listRequests: (input: { keyword?: string; channel?: string; model?: string }) =>
     invoke<RawLog[]>("list_requests", { ...input }).then((rows) => rows.map(mapLog)),
   insertRequest: (input: Record<string, unknown>) => invoke("insert_request", { ...input }),
+
+  // ---- Security logs ----
+  listSecurityLogs: (requestId?: string) =>
+    invoke<RawSecurityLog[]>("list_security_logs", { requestId: requestId ?? null }).then((rows) =>
+      rows.map((l) => ({
+        id: l.id,
+        requestId: l.requestId,
+        stage: l.stage as SecurityLog["stage"],
+        ruleId: l.ruleId,
+        category: l.category,
+        risk: l.risk as SecurityLog["risk"],
+        snippetMasked: l.snippetMasked,
+        createdAt: l.createdAt,
+      })),
+    ),
 
   // ---- Settings ----
   listSettings: () => invoke<{ key: string; value: string }[]>("list_settings"),
@@ -113,6 +132,7 @@ interface RawChannel {
   latencyMs: number | null;
   priority: number;
   weight: number;
+  pricePer1kTokens: number;
   createdAt: string;
 }
 interface RawKey {
@@ -156,4 +176,14 @@ interface RawDailyStat {
   tokens: number;
   cost: number;
   avgLatencyMs: number;
+}
+interface RawSecurityLog {
+  id: string;
+  requestId: string;
+  stage: string;
+  ruleId: string;
+  category: string;
+  risk: string;
+  snippetMasked: string;
+  createdAt: string;
 }

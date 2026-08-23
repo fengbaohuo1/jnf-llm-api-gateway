@@ -69,14 +69,48 @@ pub async fn insert_request(
     cost: f64,
     error: Option<String>,
 ) -> Result<(), String> {
+    log_request(
+        pool(&state),
+        &channel_id,
+        &channel_name,
+        key_id.as_deref(),
+        key_name.as_deref(),
+        &model,
+        status,
+        latency_ms,
+        prompt_tokens,
+        completion_tokens,
+        cost,
+        error.as_deref(),
+    )
+    .await
+    .map(|_| ())
+}
+
+/// 记账：写 requests 日志 + 累加 daily_stats + 扣减 keys.used_tokens。
+/// 转发代理（proxy 模块）与 `insert_request` 命令共用，返回新请求 id 供安全日志关联。
+pub(crate) async fn log_request(
+    pool: &SqlitePool,
+    channel_id: &str,
+    channel_name: &str,
+    key_id: Option<&str>,
+    key_name: Option<&str>,
+    model: &str,
+    status: i64,
+    latency_ms: i64,
+    prompt_tokens: i64,
+    completion_tokens: i64,
+    cost: f64,
+    error: Option<&str>,
+) -> Result<String, String> {
     let id = new_id("req");
     let ts = now_iso();
     let total = prompt_tokens + completion_tokens;
-    let p = pool(&state);
+    let p = pool;
     sqlx::query(
         "INSERT INTO requests (id, timestamp, channel_id, channel_name, key_id, key_name, model, status, latency_ms, prompt_tokens, completion_tokens, total_tokens, cost, error) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
     )
-    .bind(id).bind(ts).bind(&channel_id).bind(&channel_name).bind(&key_id).bind(&key_name).bind(&model).bind(status).bind(latency_ms).bind(prompt_tokens).bind(completion_tokens).bind(total).bind(cost).bind(&error)
+    .bind(&id).bind(&ts).bind(channel_id).bind(channel_name).bind(key_id).bind(key_name).bind(model).bind(status).bind(latency_ms).bind(prompt_tokens).bind(completion_tokens).bind(total).bind(cost).bind(error)
     .execute(p)
     .await
     .map_err(|e| e.to_string())?;
@@ -90,7 +124,7 @@ pub async fn insert_request(
             .await
             .map_err(|e| e.to_string())?;
     }
-    Ok(())
+    Ok(id)
 }
 
 pub(crate) async fn upsert_daily(

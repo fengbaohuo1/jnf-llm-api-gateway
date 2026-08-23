@@ -3,10 +3,11 @@ import { PageHeader, Card } from "../components/ui";
 import { Button } from "../components/Modal";
 import { api } from "../api";
 
-type TabKey = "server" | "general" | "ui" | "retry" | "failover";
+type TabKey = "server" | "proxy" | "general" | "ui" | "retry" | "failover";
 
 const tabs: { key: TabKey; label: string }[] = [
   { key: "server", label: "服务配置" },
+  { key: "proxy", label: "代理与安全" },
   { key: "general", label: "通用设置" },
   { key: "ui", label: "界面设置" },
   { key: "retry", label: "重试策略" },
@@ -58,7 +59,7 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 }
 
 function ServerTab() {
-  const host = useSetting("server.host", "0.0.0.0");
+  const host = useSetting("server.host", "127.0.0.1");
   const port = useSetting("server.port", "8787");
   const basePath = useSetting("server.base_path", "/v1");
   const [saved, setSaved] = useState(false);
@@ -70,8 +71,9 @@ function ServerTab() {
   return (
     <Card>
       <h3 className="mb-2 text-sm font-semibold text-gray-700">监听服务</h3>
+      <p className="mb-2 text-xs text-gray-400">修改监听地址或端口后需重启应用生效</p>
       <div className="divide-y divide-gray-100">
-        <Row label="监听地址" desc="网关服务绑定地址">
+        <Row label="监听地址" desc="网关服务绑定地址（默认仅本机，对外开放请自行评估风险）">
           <input value={host.value ?? ""} onChange={(e) => host.setValue(e.target.value)} className={inputCls} />
         </Row>
         <Row label="监听端口" desc="网关 HTTP 服务端口">
@@ -84,6 +86,56 @@ function ServerTab() {
       <div className="mt-4 flex items-center justify-end gap-3">
         {saved && <span className="text-xs text-green-600">已保存</span>}
         <Button onClick={saveAll}>保存服务配置</Button>
+      </div>
+    </Card>
+  );
+}
+
+function ProxyTab() {
+  const enabled = useSetting("server.enabled", "true");
+  const securityEnabled = useSetting("security.enabled", "true");
+  const securityMode = useSetting("security.mode", "replace");
+  const port = useSetting("server.port", "8787");
+  const basePath = useSetting("server.base_path", "/v1");
+  const [saved, setSaved] = useState(false);
+  const saveAll = async () => {
+    await Promise.all([enabled.save(), securityEnabled.save(), securityMode.save()]);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
+  };
+  const endpoint = `http://127.0.0.1:${port.value ?? 8787}${basePath.value ?? "/v1"}/chat/completions`;
+  return (
+    <Card>
+      <h3 className="mb-2 text-sm font-semibold text-gray-700">转发代理</h3>
+      <div className="divide-y divide-gray-100">
+        <Row label="启用代理" desc="关闭后代理返回 503，不影响应用其他功能">
+          <Toggle checked={enabled.value === "true"} onChange={(v) => enabled.setValue(String(v))} />
+        </Row>
+        <Row label="服务地址" desc="本地程序接入时配置 Base URL 为以下地址，并使用 sk-llmapi-* 密钥">
+          <code className="block rounded-md bg-gray-100 px-3 py-1.5 text-xs text-gray-700">{endpoint}</code>
+        </Row>
+      </div>
+      <h3 className="mb-2 mt-6 text-sm font-semibold text-gray-700">安全扫描与脱敏</h3>
+      <div className="divide-y divide-gray-100">
+        <Row
+          label="启用安全扫描"
+          desc="扫描请求与响应中的敏感信息（密钥/密码/手机号/证件号）与提示注入特征"
+        >
+          <Toggle checked={securityEnabled.value === "true"} onChange={(v) => securityEnabled.setValue(String(v))} />
+        </Row>
+        <Row
+          label="处理模式"
+          desc="替换：敏感片段脱敏后照常转发；拦截：检测到高风险内容直接拒绝请求/丢弃响应"
+        >
+          <select value={securityMode.value ?? "replace"} onChange={(e) => securityMode.setValue(e.target.value)} className={inputCls}>
+            <option value="replace">替换（脱敏后转发）</option>
+            <option value="block">拦截（高风险直接拒绝）</option>
+          </select>
+        </Row>
+      </div>
+      <div className="mt-4 flex items-center justify-end gap-3">
+        {saved && <span className="text-xs text-green-600">已保存</span>}
+        <Button onClick={saveAll}>保存代理与安全设置</Button>
       </div>
     </Card>
   );
@@ -253,6 +305,7 @@ export function Settings() {
         ))}
       </div>
       {tab === "server" && <ServerTab />}
+      {tab === "proxy" && <ProxyTab />}
       {tab === "general" && <GeneralTab />}
       {tab === "ui" && <UiTab />}
       {tab === "retry" && <RetryTab />}

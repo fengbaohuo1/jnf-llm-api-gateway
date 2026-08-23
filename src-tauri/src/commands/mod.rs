@@ -1,6 +1,7 @@
 pub mod channels;
 pub mod keys;
 pub mod requests;
+pub mod security;
 pub mod settings;
 pub mod stats;
 
@@ -66,7 +67,7 @@ pub fn new_id(prefix: &str) -> String {
 
 pub fn gen_key_secret() -> String {
     let s = Uuid::new_v4().simple().to_string();
-    format!("sk-waliapi-{}", &s[..20])
+    format!("sk-llmapi-{}", &s[..20])
 }
 
 pub fn mask(secret: &str) -> String {

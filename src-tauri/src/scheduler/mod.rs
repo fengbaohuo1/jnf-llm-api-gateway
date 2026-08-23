@@ -7,9 +7,7 @@
 //! - 队列排序：① 过滤（启用 + 模型匹配）→ ② priority 降序 → ③ 同优先级组内按 weight 权重随机
 //! - 权重随机是"无放回轮盘赌"：权重越大越可能排前，但每次结果带随机性，避免固定渠道被压垮
 //!
-//! 注：转发层（chat_completion 命令）实现后，`select_channels` 会在路由时被调用，
-//! 届时移除本标注。
-#![allow(dead_code)]
+//! 调用方：转发代理（proxy 模块）在每次请求路由时调用 `select_channels`。
 
 use rand::seq::SliceRandom;
 use rand::Rng;
@@ -19,12 +17,19 @@ use sqlx::SqlitePool;
 #[derive(Clone)]
 pub struct ChannelChoice {
     pub id: String,
+    pub name: String,
+    /// 渠道类型（转发层当前透传 OpenAI 兼容协议；类型字段保留给协议路由）
+    #[allow(dead_code)]
     pub channel_type: String,
     pub base_url: String,
     pub api_key: String,
+    /// 渠道配置的模型（转发时使用请求的 model；本字段保留用于日志/展示）
+    #[allow(dead_code)]
     pub model: String,
     pub priority: i64,
     pub weight: i64,
+    /// 每 1k token 成本单价（元），转发层记账用
+    pub price_per_1k_tokens: f64,
 }
 
 /// 构建有序故障转移队列：
@@ -35,8 +40,8 @@ pub async fn select_channels(
     pool: &SqlitePool,
     requested_model: &str,
 ) -> Result<Vec<ChannelChoice>, String> {
-    let rows: Vec<(String, String, String, String, String, i64, i64)> = sqlx::query_as(
-        "SELECT id, type, base_url, api_key_encrypted, model, priority, weight FROM channels
+    let rows: Vec<(String, String, String, String, String, String, i64, i64, f64)> = sqlx::query_as(
+        "SELECT id, name, type, base_url, api_key_encrypted, model, priority, weight, price_per_1k_tokens FROM channels
          WHERE status = 'active' AND (model = ?1 OR model = '')
          ORDER BY priority DESC",
     )
@@ -47,14 +52,16 @@ pub async fn select_channels(
 
     let candidates: Vec<ChannelChoice> = rows
         .into_iter()
-        .map(|(id, channel_type, base_url, api_key, model, priority, weight)| ChannelChoice {
+        .map(|(id, name, channel_type, base_url, api_key, model, priority, weight, price_per_1k_tokens)| ChannelChoice {
             id,
+            name,
             channel_type,
             base_url,
             api_key,
             model,
             priority,
             weight,
+            price_per_1k_tokens,
         })
         .collect();
 
@@ -130,6 +137,7 @@ mod tests {
                 id TEXT PRIMARY KEY, name TEXT, type TEXT, base_url TEXT,
                 model TEXT, status TEXT, api_key_encrypted TEXT,
                 latency_ms INTEGER, priority INTEGER, weight INTEGER,
+                price_per_1k_tokens REAL DEFAULT 0,
                 created_at TEXT, updated_at TEXT)",
         )
         .execute(&pool)

@@ -22,6 +22,7 @@ interface AppState {
     apiKey: string;
     priority: number;
     weight: number;
+    pricePer1kTokens: number;
   }) => Promise<void>;
   updateChannel: (input: {
     id: string;
@@ -33,6 +34,7 @@ interface AppState {
     apiKey: string;
     priority: number;
     weight: number;
+    pricePer1kTokens: number;
   }) => Promise<void>;
   removeChannel: (id: string) => Promise<void>;
   toggleChannelStatus: (id: string) => Promise<void>;

@@ -16,9 +16,10 @@ type FormState = {
   status: ChannelStatus;
   priority: number;
   weight: number;
+  pricePer1kTokens: number;
 };
 
-const emptyForm: FormState = { name: "", type: "OpenAI", baseUrl: "", model: "", apiKey: "", status: "active", priority: 0, weight: 1 };
+const emptyForm: FormState = { name: "", type: "OpenAI", baseUrl: "", model: "", apiKey: "", status: "active", priority: 0, weight: 1, pricePer1kTokens: 0 };
 
 const inputCls =
   "w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
@@ -104,7 +105,7 @@ function ChannelFormModal({
             </select>
           </Field>
         </div>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-3 gap-4">
           <Field label="优先级" hint="故障转移时越大的越先尝试（主渠道 = 最高优先级）">
             <input
               value={form.priority}
@@ -121,6 +122,17 @@ function ChannelFormModal({
               className={inputCls}
               type="number"
               placeholder="1"
+            />
+          </Field>
+          <Field label="单价（元/1k tokens）" hint="转发代理记账用，成本 = 总 tokens ÷ 1000 × 单价">
+            <input
+              value={form.pricePer1kTokens}
+              onChange={(e) => setForm((f) => ({ ...f, pricePer1kTokens: Number(e.target.value) || 0 }))}
+              className={inputCls}
+              type="number"
+              step="0.0001"
+              min="0"
+              placeholder="0"
             />
           </Field>
         </div>
@@ -202,6 +214,7 @@ export function Channels() {
           apiKey: data.apiKey,
           priority: data.priority,
           weight: data.weight,
+          pricePer1kTokens: data.pricePer1kTokens,
         });
       } else {
         await addChannel({
@@ -212,6 +225,7 @@ export function Channels() {
           apiKey: data.apiKey,
           priority: data.priority,
           weight: data.weight,
+          pricePer1kTokens: data.pricePer1kTokens,
         });
       }
       setModalOpen(false);
@@ -310,6 +324,7 @@ export function Channels() {
               <th className="px-4 py-3 font-medium">类型</th>
               <th className="px-4 py-3 font-medium">模型</th>
               <th className="px-4 py-3 font-medium">优先级</th>
+              <th className="px-4 py-3 font-medium">单价</th>
               <th className="px-4 py-3 font-medium">状态</th>
               <th className="px-4 py-3 font-medium">延迟</th>
               <th className="px-4 py-3 font-medium">创建时间</th>
@@ -330,6 +345,16 @@ export function Channels() {
                 <td className="px-4 py-3 text-gray-600">
                   <span className="font-medium text-gray-700">{c.priority}</span>
                   <span className="text-xs text-gray-400"> / {c.weight}</span>
+                </td>
+                <td className="px-4 py-3 text-gray-600">
+                  {c.pricePer1kTokens > 0 ? (
+                    <span>
+                      ¥{c.pricePer1kTokens}
+                      <span className="text-xs text-gray-400">/1k</span>
+                    </span>
+                  ) : (
+                    <span className="text-gray-300">—</span>
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   <button onClick={() => handleToggle(c)} title="点击切换状态">
@@ -358,7 +383,7 @@ export function Channels() {
             ))}
             {!loadingChannels && filtered.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-400">
+                <td colSpan={9} className="px-4 py-10 text-center text-sm text-gray-400">
                   {channels.length === 0 ? "暂无渠道，点击右上角添加" : "没有符合筛选条件的渠道"}
                 </td>
               </tr>
@@ -378,6 +403,7 @@ export function Channels() {
           status: editing.status,
           priority: editing.priority,
           weight: editing.weight,
+          pricePer1kTokens: editing.pricePer1kTokens,
         } : null}
         onClose={() => setModalOpen(false)}
         onSubmit={handleSubmit}

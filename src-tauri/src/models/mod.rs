@@ -15,6 +15,8 @@ pub struct Channel {
     pub latency_ms: Option<i64>,
     pub priority: i64,
     pub weight: i64,
+    /// 每 1k token 的成本单价（元），用于转发层记账
+    pub price_per_1k_tokens: f64,
     pub created_at: String,
 }
 
@@ -78,4 +80,18 @@ pub struct DailyStat {
     pub tokens: i64,
     pub cost: f64,
     pub avg_latency_ms: f64,
+}
+
+/// 安全事件日志（请求侧/响应侧扫描命中），一对多挂在 requests 下
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct SecurityLog {
+    pub id: String,
+    pub request_id: String,
+    pub stage: String,
+    pub rule_id: String,
+    pub category: String,
+    pub risk: String,
+    pub snippet_masked: String,
+    pub created_at: String,
 }
