@@ -186,6 +186,8 @@ interface RawDailyStat {
   date: string;
   requests: number;
   tokens: number;
+  cacheHitTokens: number;
+  completionTokens: number;
   cost: number;
   avgLatencyMs: number;
 }

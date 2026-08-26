@@ -86,6 +86,10 @@ pub struct DailyStat {
     pub date: String,
     pub requests: i64,
     pub tokens: i64,
+    /// 输入 token 中命中前缀缓存的累计数（缓存感知计费明细）
+    pub cache_hit_tokens: i64,
+    /// 输出（completion）token 累计数
+    pub completion_tokens: i64,
     pub cost: f64,
     pub avg_latency_ms: f64,
 }

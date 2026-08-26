@@ -291,7 +291,7 @@ export function Settings() {
   return (
     <div>
       <PageHeader title="设置" description="配置网关运行参数" />
-      <div className="mb-4 flex gap-1 border-b border-gray-200">
+      <div className="mb-4 flex flex-wrap gap-1 border-b border-gray-200">
         {tabs.map((t) => (
           <button
             key={t.key}

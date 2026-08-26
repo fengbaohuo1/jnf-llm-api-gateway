@@ -4,12 +4,14 @@
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-/// 当前时间（本地时区近似），格式 "YYYY-MM-DD HH:MM:SS"
+/// 当前时间（北京时间，UTC+8，无夏令时），格式 "YYYY-MM-DD HH:MM:SS"
 pub fn now_iso() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs() as i64;
+    // UNIX 时间戳是 UTC；+8 小时得到北京时间后再做公历换算
+    let secs = secs + 8 * 3600;
     let days = secs / 86400;
     let rem = secs % 86400;
     let (y, m, d) = civil_from_days(days);

@@ -1,29 +1,59 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { BarChart3 } from "lucide-react";
 import { api } from "../api";
 import { Card, PageHeader } from "../components/ui";
 
-const ranges = ["今日", "本周", "本月"] as const;
+const ranges = [
+  { key: "今日", days: 1 },
+  { key: "本周", days: 7 },
+  { key: "本月", days: 30 },
+] as const;
+
+type RangeKey = (typeof ranges)[number]["key"];
+
+interface DayStat {
+  date: string;
+  requests: number;
+  tokens: number;
+  cacheHitTokens: number;
+  completionTokens: number;
+  cost: number;
+}
+
+/** 精确格式化（不用 k/M 缩写） */
+const fmt = (n: number) => n.toLocaleString("en-US");
 
 export function Usage() {
-  const [range, setRange] = useState<(typeof ranges)[number]>("今日");
-  const [totals, setTotals] = useState({ requests: 0, tokens: 0, cost: 0 });
-  const [daily, setDaily] = useState<{ date: string; tokens: number }[]>([]);
+  const [range, setRange] = useState<RangeKey>("今日");
+  const [daily, setDaily] = useState<DayStat[]>([]);
 
   useEffect(() => {
+    const days = ranges.find((r) => r.key === range)!.days;
     api
-      .listRequests({})
-      .then((logs) => {
-        setTotals(
-          logs.reduce(
-            (acc, l) => ({ requests: acc.requests + 1, tokens: acc.tokens + l.tokens, cost: acc.cost + l.cost }),
-            { requests: 0, tokens: 0, cost: 0 },
-          ),
-        );
-      })
+      .listDailyStats(days)
+      .then((rows) => setDaily(rows.reverse()))
       .catch(() => {});
-    api.listDailyStats(7).then((rows) => setDaily(rows.reverse())).catch(() => {});
   }, [range]);
+
+  // 三部分拆分：命中缓存 = 明细列；输出 = completion；未命中 = 剩余输入
+  const totals = useMemo(
+    () =>
+      daily.reduce(
+        (acc, d) => ({
+          requests: acc.requests + d.requests,
+          tokens: acc.tokens + d.tokens,
+          cacheHit: acc.cacheHit + d.cacheHitTokens,
+          output: acc.output + d.completionTokens,
+          cost: acc.cost + d.cost,
+        }),
+        { requests: 0, tokens: 0, cacheHit: 0, output: 0, cost: 0 },
+      ),
+    [daily],
+  );
+  const cacheMiss = Math.max(0, totals.tokens - totals.cacheHit - totals.output);
+  // 缓存命中率 = 命中缓存 / 输入总量（命中 + 未命中）
+  const inputTokens = totals.cacheHit + cacheMiss;
+  const hitRate = inputTokens > 0 ? (totals.cacheHit / inputTokens) * 100 : null;
 
   const max = Math.max(1, ...daily.map((d) => d.tokens));
 
@@ -31,54 +61,94 @@ export function Usage() {
     <div>
       <PageHeader
         title="用量"
-        description="查看请求量与 Token 消耗"
+        description="查看请求量与 Token 消耗（精确到个位）"
         actions={
           <div className="flex rounded-lg border border-gray-200 p-0.5">
             {ranges.map((r) => (
               <button
-                key={r}
-                onClick={() => setRange(r)}
+                key={r.key}
+                onClick={() => setRange(r.key)}
                 className={`rounded-md px-3 py-1 text-sm font-medium ${
-                  range === r ? "bg-indigo-600 text-white" : "text-gray-600 hover:bg-gray-100"
+                  range === r.key ? "bg-indigo-600 text-white" : "text-gray-600 hover:bg-gray-100"
                 }`}
               >
-                {r}
+                {r.key}
               </button>
             ))}
           </div>
         }
       />
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Card>
-          <p className="text-sm text-gray-500">请求总数</p>
-          <p className="mt-1 text-2xl font-bold text-gray-900">{totals.requests.toLocaleString()}</p>
+          <p className="text-xs text-gray-500">请求总数</p>
+          <p className="mt-1 text-2xl font-bold text-gray-900">{fmt(totals.requests)}</p>
         </Card>
         <Card>
-          <p className="text-sm text-gray-500">Token 总消耗</p>
-          <p className="mt-1 text-2xl font-bold text-gray-900">{totals.tokens.toLocaleString()}</p>
+          <p className="text-xs text-gray-500">Token 总消耗</p>
+          <p className="mt-1 text-2xl font-bold text-gray-900">{fmt(totals.tokens)}</p>
+          <p className="mt-1 text-xs text-gray-400">
+            缓存命中率{" "}
+            <span className="font-medium text-emerald-600">
+              {hitRate === null ? "—" : `${hitRate.toFixed(1)}%`}
+            </span>
+          </p>
         </Card>
         <Card>
-          <p className="text-sm text-gray-500">预估成本</p>
-          <p className="mt-1 text-2xl font-bold text-gray-900">${totals.cost.toFixed(3)}</p>
+          <p className="text-xs text-gray-500">预估成本</p>
+          <p className="mt-1 text-2xl font-bold text-gray-900">¥{totals.cost.toFixed(3)}</p>
         </Card>
       </div>
 
-      <Card className="mt-6">
-        <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-gray-700">
-          <BarChart3 size={16} /> 近 7 天 Token 消耗
+      <Card className="mt-4">
+        <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold text-gray-700">
+          <BarChart3 size={15} /> Token 消耗构成（近 {ranges.find((r) => r.key === range)!.days} 天）
         </h3>
-        <div className="flex h-56 items-end gap-3">
-          {daily.map((p, i) => (
-            <div key={i} className="flex flex-1 flex-col items-center gap-1">
-              <span className="text-[10px] text-gray-400">{(p.tokens / 1000).toFixed(0)}k</span>
-              <div
-                className="w-full rounded-t-md bg-violet-500/80 hover:bg-violet-600"
-                style={{ height: `${(p.tokens / max) * 100}%`, minHeight: "10px" }}
-              />
-              <span className="text-[10px] text-gray-400">{p.date.slice(5)}</span>
-            </div>
-          ))}
+        <div className="mb-3 flex items-center gap-4 text-xs text-gray-500">
+          <span className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-sm bg-emerald-500" /> 命中缓存
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-sm bg-sky-500" /> 未命中缓存
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-sm bg-violet-500" /> 输出
+          </span>
+        </div>
+        <div className="flex h-52 items-end gap-2">
+          {daily.map((p, i) => {
+            const denom = Math.max(p.tokens, 1);
+            const miss = Math.max(0, p.tokens - p.cacheHitTokens - p.completionTokens);
+            return (
+              <div key={i} className="group relative flex h-full min-w-0 flex-1 flex-col items-center">
+                {/* 悬停浮窗：标明当天各类 token 数量 */}
+                <div className="pointer-events-none absolute -top-1 left-1/2 z-10 hidden -translate-x-1/2 -translate-y-full flex-col gap-0.5 whitespace-nowrap rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs shadow-lg group-hover:flex">
+                  <p className="mb-0.5 font-semibold text-gray-900">
+                    {p.date} · 总计 {fmt(p.tokens)}
+                  </p>
+                  <p className="text-emerald-600">命中缓存 {fmt(p.cacheHitTokens)}</p>
+                  <p className="text-sky-600">未命中 {fmt(miss)}</p>
+                  <p className="text-violet-600">输出 {fmt(p.completionTokens)}</p>
+                </div>
+                <span className="mb-1 truncate text-[10px] font-medium text-gray-500" title={fmt(p.tokens)}>
+                  {fmt(p.tokens)}
+                </span>
+                {/* 柱子区域：h-40 定高 → 绝对定位百分比高度，避免 flex 百分比解析异常导致贴底 */}
+                <div className="relative h-40 w-full">
+                  <div
+                    className="absolute inset-x-0 bottom-0 flex flex-col justify-end overflow-hidden rounded-t-md"
+                    style={{ height: `${(p.tokens / max) * 100}%`, minHeight: "8px" }}
+                  >
+                    {/* 从上到下：命中缓存 → 未命中 → 输出（flex-col 首个子元素在顶部） */}
+                    <div className="bg-emerald-500/80" style={{ height: `${(p.cacheHitTokens / denom) * 100}%` }} />
+                    <div className="bg-sky-500/80" style={{ height: `${(miss / denom) * 100}%` }} />
+                    <div className="bg-violet-500/80" style={{ height: `${(p.completionTokens / denom) * 100}%` }} />
+                  </div>
+                </div>
+                <span className="mt-1 text-[10px] text-gray-400">{p.date.slice(5)}</span>
+              </div>
+            );
+          })}
           {daily.length === 0 && <p className="w-full py-20 text-center text-sm text-gray-400">暂无数据</p>}
         </div>
       </Card>

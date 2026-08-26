@@ -75,11 +75,18 @@ function StatCard({ icon, label, value, unit, color }: { icon: React.ReactNode; 
 
 function Chart({ values, max, labels, color }: { values: number[]; max: number; labels: string[]; color: string }) {
   return (
-    <div className="flex h-48 items-end gap-2">
+    <div className="flex h-40 items-end gap-2">
       {values.map((v, i) => (
-        <div key={i} className="flex flex-1 flex-col items-center gap-1">
-          <div className={`w-full rounded-t-md ${color}`} style={{ height: `${(v / max) * 100}%`, minHeight: "4px" }} title={v.toLocaleString()} />
-          <span className="text-[10px] text-gray-400">{labels[i]}</span>
+        // 列 h-full（外层 h-40 定高）+ 定高容器 + 绝对定位，避免百分比解析失效导致柱子贴底
+        <div key={i} className="flex h-full min-w-0 flex-1 flex-col items-center">
+          <div className="relative h-32 w-full">
+            <div
+              className={`absolute inset-x-0 bottom-0 rounded-t-md ${color}`}
+              style={{ height: `${(v / max) * 100}%`, minHeight: "4px" }}
+              title={v.toLocaleString()}
+            />
+          </div>
+          <span className="mt-1 text-[10px] text-gray-400">{labels[i]}</span>
         </div>
       ))}
       {values.length === 0 && <p className="w-full py-16 text-center text-sm text-gray-400">暂无数据</p>}

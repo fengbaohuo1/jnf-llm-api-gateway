@@ -3,6 +3,8 @@ import { Search } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { PageHeader, Card } from "../components/ui";
 
+const fmt = (n: number) => n.toLocaleString("en-US");
+
 function statusPill(status: number) {
   const cls =
     status >= 500
@@ -14,7 +16,7 @@ function statusPill(status: number) {
 }
 
 const inputCls =
-  "w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
+  "w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
 
 export function Logs() {
   const { logs, loadingLogs, refreshLogs } = useAppStore();
@@ -37,8 +39,6 @@ export function Logs() {
 
   const channels = useMemo(() => ["全部", ...Array.from(new Set(logs.map((l) => l.channel)))], [logs]);
   const models = useMemo(() => ["全部", ...Array.from(new Set(logs.map((l) => l.model)))], [logs]);
-
-  const filtered = logs;
 
   return (
     <div>
@@ -70,69 +70,63 @@ export function Logs() {
             ))}
           </select>
         </div>
-        <p className="mt-3 text-xs text-gray-400">共 {filtered.length} 条记录</p>
+        <p className="mt-2 text-xs text-gray-400">共 {logs.length} 条记录</p>
       </Card>
 
       <Card className="p-0 overflow-hidden">
         <table className="w-full text-left text-sm">
           <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500">
             <tr>
-              <th className="px-4 py-3 font-medium">请求ID</th>
-              <th className="px-4 py-3 font-medium">时间</th>
-              <th className="px-4 py-3 font-medium">渠道</th>
-              <th className="px-4 py-3 font-medium">模型</th>
-              <th className="px-4 py-3 font-medium">密钥</th>
-              <th className="px-4 py-3 font-medium">状态</th>
-              <th className="px-4 py-3 font-medium">延迟</th>
-              <th className="px-4 py-3 font-medium">Token</th>
-              <th className="px-4 py-3 font-medium">缓存命中</th>
-              <th className="px-4 py-3 font-medium">思考</th>
-              <th className="px-4 py-3 font-medium">成本</th>
+              <th className="px-3 py-2 font-medium">时间</th>
+              <th className="px-3 py-2 font-medium">渠道 / 密钥</th>
+              <th className="px-3 py-2 font-medium">模型</th>
+              <th className="px-3 py-2 font-medium">状态</th>
+              <th className="px-3 py-2 font-medium">延迟</th>
+              <th className="px-3 py-2 font-medium">Token（命中 / 输出）</th>
+              <th className="px-3 py-2 font-medium">成本</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {filtered.map((l) => (
+            {logs.map((l) => (
               <tr key={l.id} className="hover:bg-gray-50">
-                <td className="px-4 py-2.5 font-mono text-xs text-gray-500">{l.id}</td>
-                <td className="px-4 py-2.5 text-gray-600">{l.timestamp}</td>
-                <td className="px-4 py-2.5 text-gray-700">{l.channel}</td>
-                <td className="px-4 py-2.5 text-gray-600">{l.model}</td>
-                <td className="px-4 py-2.5">
-                  <code className="font-mono text-xs text-gray-500">{l.key}</code>
+                <td className="px-3 py-2">
+                  <p className="font-mono text-[11px] text-gray-400" title={l.id}>
+                    {l.id.slice(4, 16)}
+                  </p>
+                  <p className="text-gray-700">{l.timestamp.slice(5, 16)}</p>
                 </td>
-                <td className="px-4 py-2.5">{statusPill(l.status)}</td>
-                <td className="px-4 py-2.5 text-gray-600">{l.latencyMs} ms</td>
-                <td className="px-4 py-2.5 text-gray-600">{l.tokens.toLocaleString()}</td>
-                <td className="px-4 py-2.5">
-                  {l.cacheHitTokens > 0 ? (
-                    <span className="text-emerald-600">
-                      {l.cacheHitTokens.toLocaleString()}
-                      <span className="text-xs text-gray-400">（{Math.round((l.cacheHitTokens / Math.max(l.tokens, 1)) * 100)}%）</span>
-                    </span>
-                  ) : (
-                    <span className="text-gray-300">—</span>
+                <td className="px-3 py-2">
+                  <p className="text-gray-700">{l.channel}</p>
+                  {l.key && <p className="max-w-28 truncate text-xs text-gray-400" title={l.key}>{l.key}</p>}
+                </td>
+                <td className="px-3 py-2 text-gray-600">{l.model}</td>
+                <td className="px-3 py-2">{statusPill(l.status)}</td>
+                <td className="px-3 py-2 text-gray-600">{l.latencyMs} ms</td>
+                <td className="px-3 py-2">
+                  <p className="text-gray-700">{fmt(l.tokens)}</p>
+                  {(l.cacheHitTokens > 0 || l.reasoningTokens > 0) && (
+                    <p className="text-xs">
+                      {l.cacheHitTokens > 0 && (
+                        <span className="text-emerald-600">命中 {fmt(l.cacheHitTokens)}</span>
+                      )}
+                      {l.cacheHitTokens > 0 && l.reasoningTokens > 0 && <span className="text-gray-300"> · </span>}
+                      {l.reasoningTokens > 0 && <span className="text-violet-600">输出 {fmt(l.reasoningTokens)}</span>}
+                    </p>
                   )}
                 </td>
-                <td className="px-4 py-2.5">
-                  {l.reasoningTokens > 0 ? (
-                    <span className="text-violet-600">{l.reasoningTokens.toLocaleString()}</span>
-                  ) : (
-                    <span className="text-gray-300">—</span>
-                  )}
-                </td>
-                <td className="px-4 py-2.5 text-gray-600">${l.cost.toFixed(3)}</td>
+                <td className="px-3 py-2 text-gray-600">¥{l.cost.toFixed(3)}</td>
               </tr>
             ))}
             {loadingLogs && (
               <tr>
-                <td colSpan={11} className="px-4 py-10 text-center text-sm text-gray-400">
+                <td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-400">
                   加载中…
                 </td>
               </tr>
             )}
-            {!loadingLogs && filtered.length === 0 && (
+            {!loadingLogs && logs.length === 0 && (
               <tr>
-                <td colSpan={11} className="px-4 py-10 text-center text-sm text-gray-400">
+                <td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-400">
                   没有符合条件的日志记录
                 </td>
               </tr>

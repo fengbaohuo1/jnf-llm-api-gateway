@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Pencil, Plus, Trash2, Cable, Search } from "lucide-react";
+import { Pencil, Plus, Trash2, Cable, Search, ChevronDown } from "lucide-react";
 import { channelTypes } from "../data/mock";
 import type { Channel, ChannelStatus, ChannelType } from "../types";
 import { useAppStore } from "../store/useAppStore";
@@ -16,9 +16,10 @@ type FormState = {
   status: ChannelStatus;
   priority: number;
   weight: number;
-  pricePer1kTokens: number;
-  cachePricePer1kTokens: number;
-  reasoningPricePer1kTokens: number;
+  // 以下三个价格以"元/M tokens"输入（文本格式，无步进计数器），提交时换算回每 1k 存储
+  pricePerM: string;
+  cachePricePerM: string;
+  reasoningPricePerM: string;
 };
 
 const emptyForm: FormState = {
@@ -30,10 +31,15 @@ const emptyForm: FormState = {
   status: "active",
   priority: 0,
   weight: 1,
-  pricePer1kTokens: 0,
-  cachePricePer1kTokens: 0,
-  reasoningPricePer1kTokens: 0,
+  pricePerM: "",
+  cachePricePerM: "",
+  reasoningPricePerM: "",
 };
+
+/** 每 1k 单价（存储）→ 元/M 展示值，去尾零 */
+const perM = (per1k: number) => (per1k > 0 ? parseFloat((per1k * 1000).toFixed(6)) : 0);
+/** 元/M 输入 → 每 1k 存储值 */
+const per1k = (perM: number) => Math.round((perM / 1000) * 1e9) / 1e9;
 
 const inputCls =
   "w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
@@ -45,6 +51,24 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
       {children}
       {hint && <span className="mt-0.5 block text-xs text-gray-400">{hint}</span>}
     </label>
+  );
+}
+
+/** 手风琴折叠区（默认收起，减少表单字段数量） */
+function Accordion({ title, children }: { title: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="overflow-hidden rounded-lg border border-gray-200">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+      >
+        {title}
+        <ChevronDown size={16} className={`shrink-0 text-gray-400 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && <div className="border-t border-gray-200 p-3">{children}</div>}
+    </div>
   );
 }
 
@@ -119,7 +143,7 @@ function ChannelFormModal({
             </select>
           </Field>
         </div>
-        <div className="grid grid-cols-2 gap-4">
+        <Accordion title="负载均衡配置（优先级 / 权重）">
           <div className="grid grid-cols-2 gap-4">
             <Field label="优先级" hint="故障转移时越大的越先尝试（主渠道 = 最高优先级）">
               <input
@@ -140,44 +164,41 @@ function ChannelFormModal({
               />
             </Field>
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <Field label="单价（元/1k tokens）" hint="转发代理记账用，成本 = tokens ÷ 1000 × 单价">
+        </Accordion>
+        <Accordion title="价格配置（元/M tokens）">
+          <div className="space-y-4">
+            <Field label="单价" hint="每百万 token 成本；记账成本 = tokens ÷ 1,000,000 × 单价">
               <input
-                value={form.pricePer1kTokens}
-                onChange={(e) => setForm((f) => ({ ...f, pricePer1kTokens: Number(e.target.value) || 0 }))}
+                value={form.pricePerM}
+                onChange={(e) => setForm((f) => ({ ...f, pricePerM: e.target.value }))}
                 className={inputCls}
-                type="number"
-                step="0.0001"
-                min="0"
+                type="text"
+                inputMode="decimal"
                 placeholder="0"
               />
             </Field>
-            <Field label="缓存命中单价（元/1k）" hint="留 0 = 不区分缓存，命中部分按正常单价计费">
+            <Field label="缓存命中单价" hint="留 0 = 不区分缓存，命中部分按正常单价计费">
               <input
-                value={form.cachePricePer1kTokens}
-                onChange={(e) => setForm((f) => ({ ...f, cachePricePer1kTokens: Number(e.target.value) || 0 }))}
+                value={form.cachePricePerM}
+                onChange={(e) => setForm((f) => ({ ...f, cachePricePerM: e.target.value }))}
                 className={inputCls}
-                type="number"
-                step="0.0001"
-                min="0"
+                type="text"
+                inputMode="decimal"
+                placeholder="0"
+              />
+            </Field>
+            <Field label="输出单价" hint="thinking/reasoning token 专用价（DeepSeek-R1 / OpenAI o 系列）；留 0 = 按正常单价">
+              <input
+                value={form.reasoningPricePerM}
+                onChange={(e) => setForm((f) => ({ ...f, reasoningPricePerM: e.target.value }))}
+                className={inputCls}
+                type="text"
+                inputMode="decimal"
                 placeholder="0"
               />
             </Field>
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <Field label="思考单价（元/1k）" hint="DeepSeek-R1 / OpenAI o 系列的 thinking token；留 0 = 按正常输出价">
-              <input
-                value={form.reasoningPricePer1kTokens}
-                onChange={(e) => setForm((f) => ({ ...f, reasoningPricePer1kTokens: Number(e.target.value) || 0 }))}
-                className={inputCls}
-                type="number"
-                step="0.0001"
-                min="0"
-                placeholder="0"
-              />
-            </Field>
-          </div>
-        </div>
+        </Accordion>
         <Field label="API Key" hint={initial ? "留空则保持不变" : undefined}>
           <input
             value={form.apiKey}
@@ -244,6 +265,11 @@ export function Channels() {
   const handleSubmit = async (data: FormState) => {
     setSubmitting(true);
     setError(null);
+    const price = {
+      pricePer1kTokens: per1k(parseFloat(data.pricePerM) || 0),
+      cachePricePer1kTokens: per1k(parseFloat(data.cachePricePerM) || 0),
+      reasoningPricePer1kTokens: per1k(parseFloat(data.reasoningPricePerM) || 0),
+    };
     try {
       if (editing) {
         await updateChannel({
@@ -256,9 +282,7 @@ export function Channels() {
           apiKey: data.apiKey,
           priority: data.priority,
           weight: data.weight,
-          pricePer1kTokens: data.pricePer1kTokens,
-          cachePricePer1kTokens: data.cachePricePer1kTokens,
-          reasoningPricePer1kTokens: data.reasoningPricePer1kTokens,
+          ...price,
         });
       } else {
         await addChannel({
@@ -269,9 +293,7 @@ export function Channels() {
           apiKey: data.apiKey,
           priority: data.priority,
           weight: data.weight,
-          pricePer1kTokens: data.pricePer1kTokens,
-          cachePricePer1kTokens: data.cachePricePer1kTokens,
-          reasoningPricePer1kTokens: data.reasoningPricePer1kTokens,
+          ...price,
         });
       }
       setModalOpen(false);
@@ -366,59 +388,59 @@ export function Channels() {
         <table className="w-full text-left text-sm">
           <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500">
             <tr>
-              <th className="px-4 py-3 font-medium">名称</th>
-              <th className="px-4 py-3 font-medium">类型</th>
-              <th className="px-4 py-3 font-medium">模型</th>
-              <th className="px-4 py-3 font-medium">优先级</th>
-              <th className="px-4 py-3 font-medium">单价</th>
-              <th className="px-4 py-3 font-medium">状态</th>
-              <th className="px-4 py-3 font-medium">延迟</th>
-              <th className="px-4 py-3 font-medium">创建时间</th>
-              <th className="px-4 py-3 text-right font-medium">操作</th>
+              <th className="px-3 py-2 font-medium">名称</th>
+              <th className="px-3 py-2 font-medium">类型</th>
+              <th className="px-3 py-2 font-medium">模型</th>
+              <th className="px-3 py-2 font-medium">优先级</th>
+              <th className="px-3 py-2 font-medium">单价</th>
+              <th className="px-3 py-2 font-medium">状态</th>
+              <th className="px-3 py-2 font-medium">延迟</th>
+              <th className="px-3 py-2 text-right font-medium">操作</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {filtered.map((c) => (
               <tr key={c.id} className="hover:bg-gray-50">
-                <td className="px-4 py-3">
+                <td className="px-3 py-2">
                   <p className="font-medium text-gray-900">{c.name}</p>
-                  <p className="text-xs text-gray-400">{c.baseUrl}</p>
+                  <p className="max-w-56 truncate text-xs text-gray-400" title={c.baseUrl}>
+                    {c.baseUrl}
+                  </p>
                 </td>
-                <td className="px-4 py-3">
+                <td className="px-3 py-2">
                   <ChannelTypeBadge type={c.type} />
                 </td>
-                <td className="px-4 py-3 text-gray-600">{c.model || "—"}</td>
-                <td className="px-4 py-3 text-gray-600">
+                <td className="px-3 py-2 text-gray-600">{c.model || "—"}</td>
+                <td className="px-3 py-2 text-gray-600">
                   <span className="font-medium text-gray-700">{c.priority}</span>
                   <span className="text-xs text-gray-400"> / {c.weight}</span>
                 </td>
-                <td className="px-4 py-3 text-gray-600">
+                <td className="px-3 py-2 text-gray-600">
                   {c.pricePer1kTokens > 0 ? (
                     <span>
-                      ¥{c.pricePer1kTokens}
-                      <span className="text-xs text-gray-400">/1k</span>
+                      ¥{perM(c.pricePer1kTokens)}
+                      <span className="text-xs text-gray-400">/M</span>
                       {c.cachePricePer1kTokens > 0 && (
-                        <span className="block text-xs text-emerald-500">缓存 ¥{c.cachePricePer1kTokens}</span>
+                        <span className="block text-xs text-emerald-500">缓存 ¥{perM(c.cachePricePer1kTokens)}</span>
                       )}
                       {c.reasoningPricePer1kTokens > 0 && (
-                        <span className="block text-xs text-violet-500">思考 ¥{c.reasoningPricePer1kTokens}</span>
+                        <span className="block text-xs text-violet-500">输出 ¥{perM(c.reasoningPricePer1kTokens)}</span>
                       )}
                     </span>
                   ) : (
                     <span className="text-gray-300">—</span>
                   )}
                 </td>
-                <td className="px-4 py-3">
+                <td className="px-3 py-2">
                   <button onClick={() => handleToggle(c)} title="点击切换状态">
                     <StatusBadge status={c.status} />
                   </button>
                 </td>
-                <td className="px-4 py-3 text-gray-600">
+                <td className="px-3 py-2 text-gray-600">
                   {c.latencyMs ? `${c.latencyMs} ms` : "—"}
                   {testMsg[c.id] && <span className="block text-xs text-indigo-600">{testMsg[c.id]}</span>}
                 </td>
-                <td className="px-4 py-3 text-gray-500">{c.createdAt}</td>
-                <td className="px-4 py-3">
+                <td className="px-3 py-2">
                   <div className="flex justify-end gap-1">
                     <IconBtn title="测试" onClick={() => handleTest(c.id)}>
                       <Cable size={15} />
@@ -435,7 +457,7 @@ export function Channels() {
             ))}
             {!loadingChannels && filtered.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-4 py-10 text-center text-sm text-gray-400">
+                <td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-400">
                   {channels.length === 0 ? "暂无渠道，点击右上角添加" : "没有符合筛选条件的渠道"}
                 </td>
               </tr>
@@ -455,9 +477,9 @@ export function Channels() {
           status: editing.status,
           priority: editing.priority,
           weight: editing.weight,
-          pricePer1kTokens: editing.pricePer1kTokens,
-          cachePricePer1kTokens: editing.cachePricePer1kTokens,
-          reasoningPricePer1kTokens: editing.reasoningPricePer1kTokens,
+          pricePerM: editing.pricePer1kTokens > 0 ? String(perM(editing.pricePer1kTokens)) : "",
+          cachePricePerM: editing.cachePricePer1kTokens > 0 ? String(perM(editing.cachePricePer1kTokens)) : "",
+          reasoningPricePerM: editing.reasoningPricePer1kTokens > 0 ? String(perM(editing.reasoningPricePer1kTokens)) : "",
         } : null}
         onClose={() => setModalOpen(false)}
         onSubmit={handleSubmit}

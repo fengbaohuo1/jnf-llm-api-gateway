@@ -128,13 +128,13 @@ export function Keys() {
         <table className="w-full text-left text-sm">
           <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500">
             <tr>
-              <th className="px-4 py-3 font-medium">名称</th>
-              <th className="px-4 py-3 font-medium">密钥</th>
-              <th className="px-4 py-3 font-medium">状态</th>
-              <th className="px-4 py-3 font-medium">配额</th>
-              <th className="px-4 py-3 font-medium">使用量</th>
-              <th className="px-4 py-3 font-medium">过期时间</th>
-              <th className="px-4 py-3 text-right font-medium">操作</th>
+              <th className="px-3 py-2 font-medium">名称</th>
+              <th className="px-3 py-2 font-medium">密钥</th>
+              <th className="px-3 py-2 font-medium">状态</th>
+              <th className="px-3 py-2 font-medium">配额</th>
+              <th className="px-3 py-2 font-medium">使用量</th>
+              <th className="px-3 py-2 font-medium">过期时间</th>
+              <th className="px-3 py-2 text-right font-medium">操作</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -142,17 +142,17 @@ export function Keys() {
               const used = quotaUsed(k);
               return (
                 <tr key={k.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 font-medium text-gray-900">{k.name}</td>
-                  <td className="px-4 py-3">
+                  <td className="px-3 py-2 font-medium text-gray-900">{k.name}</td>
+                  <td className="px-3 py-2">
                     <code className="font-mono text-xs text-gray-600">{k.key.slice(0, 13)}••••••••</code>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-3 py-2">
                     <button onClick={() => toggleKeyStatus(k.id)} title="点击切换状态">
                       {statusBadge(k.status)}
                     </button>
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{k.quotaLimit === -1 ? "不限" : k.quotaLimit.toLocaleString()}</td>
-                  <td className="px-4 py-3">
+                  <td className="px-3 py-2 text-gray-600">{k.quotaLimit === -1 ? "不限" : k.quotaLimit.toLocaleString()}</td>
+                  <td className="px-3 py-2">
                     <div className="flex items-center gap-2">
                       <div className="h-1.5 w-24 overflow-hidden rounded-full bg-gray-100">
                         <div
@@ -161,12 +161,12 @@ export function Keys() {
                         />
                       </div>
                       <span className="text-xs text-gray-500">
-                        {used !== null ? `${used}%` : `${(k.usedTokens / 1000).toFixed(1)}k`}
+                        {used !== null ? `${used}%` : k.usedTokens.toLocaleString()}
                       </span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-gray-500">{k.expiresAt ?? "—"}</td>
-                  <td className="px-4 py-3">
+                  <td className="px-3 py-2 text-gray-500">{k.expiresAt ?? "—"}</td>
+                  <td className="px-3 py-2">
                     <div className="flex justify-end">
                       <button
                         className="rounded-md p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600"
@@ -182,7 +182,7 @@ export function Keys() {
             })}
             {!loadingKeys && keys.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-400">
+                <td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-400">
                   暂无密钥，点击右上角创建
                 </td>
               </tr>

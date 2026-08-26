@@ -9,18 +9,20 @@ import { Settings } from "./pages/Settings";
 
 function App() {
   return (
-    <div className="flex min-h-screen bg-gray-50 text-gray-900">
+    <div className="flex h-screen overflow-hidden bg-gray-50 text-gray-900">
       <Sidebar />
-      <div className="mx-auto w-full max-w-6xl flex-1 px-8 py-8">
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/usage" element={<Usage />} />
-          <Route path="/channels" element={<Channels />} />
-          <Route path="/keys" element={<Keys />} />
-          <Route path="/logs" element={<Logs />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+      <div className="min-w-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-[1440px] px-4 py-4">
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/usage" element={<Usage />} />
+            <Route path="/channels" element={<Channels />} />
+            <Route path="/keys" element={<Keys />} />
+            <Route path="/logs" element={<Logs />} />
+            <Route path="/settings" element={<Settings />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </div>
       </div>
     </div>
   );

@@ -123,7 +123,7 @@ pub(crate) async fn log_request(
     .await
     .map_err(|e| e.to_string())?;
 
-    upsert_daily(p, &today_iso(), 1, total, cost, latency_ms).await?;
+    upsert_daily(p, &today_iso(), 1, total, cache_hit_tokens, completion_tokens, cost, latency_ms).await?;
     if let Some(kid) = key_id {
         sqlx::query("UPDATE keys SET used_tokens = used_tokens + ?1 WHERE id = ?2")
             .bind(total)
@@ -140,18 +140,30 @@ pub(crate) async fn upsert_daily(
     date: &str,
     reqs: i64,
     tokens: i64,
+    cache_hit: i64,
+    completion: i64,
     cost: f64,
     latency: i64,
 ) -> Result<(), String> {
     sqlx::query(
-        "INSERT INTO daily_stats (date, requests, tokens, cost, avg_latency_ms) VALUES (?1, ?2, ?3, ?4, ?5)
+        "INSERT INTO daily_stats (date, requests, tokens, cache_hit_tokens, completion_tokens, cost, avg_latency_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT(date) DO UPDATE SET
            requests = requests + ?2,
            tokens = tokens + ?3,
-           cost = cost + ?4,
-           avg_latency_ms = (avg_latency_ms * requests + ?5) / (requests + ?2)",
+           cache_hit_tokens = cache_hit_tokens + ?4,
+           completion_tokens = completion_tokens + ?5,
+           cost = cost + ?6,
+           avg_latency_ms = (avg_latency_ms * requests + ?7) / (requests + ?2)",
     )
-    .bind(date).bind(reqs).bind(tokens).bind(cost).bind(latency)
-    .execute(pool).await.map_err(|e| e.to_string())?;
+    .bind(date)
+    .bind(reqs)
+    .bind(tokens)
+    .bind(cache_hit)
+    .bind(completion)
+    .bind(cost)
+    .bind(latency)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
