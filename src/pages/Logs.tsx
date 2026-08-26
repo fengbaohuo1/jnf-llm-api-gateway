@@ -85,6 +85,8 @@ export function Logs() {
               <th className="px-4 py-3 font-medium">状态</th>
               <th className="px-4 py-3 font-medium">延迟</th>
               <th className="px-4 py-3 font-medium">Token</th>
+              <th className="px-4 py-3 font-medium">缓存命中</th>
+              <th className="px-4 py-3 font-medium">思考</th>
               <th className="px-4 py-3 font-medium">成本</th>
             </tr>
           </thead>
@@ -101,19 +103,36 @@ export function Logs() {
                 <td className="px-4 py-2.5">{statusPill(l.status)}</td>
                 <td className="px-4 py-2.5 text-gray-600">{l.latencyMs} ms</td>
                 <td className="px-4 py-2.5 text-gray-600">{l.tokens.toLocaleString()}</td>
+                <td className="px-4 py-2.5">
+                  {l.cacheHitTokens > 0 ? (
+                    <span className="text-emerald-600">
+                      {l.cacheHitTokens.toLocaleString()}
+                      <span className="text-xs text-gray-400">（{Math.round((l.cacheHitTokens / Math.max(l.tokens, 1)) * 100)}%）</span>
+                    </span>
+                  ) : (
+                    <span className="text-gray-300">—</span>
+                  )}
+                </td>
+                <td className="px-4 py-2.5">
+                  {l.reasoningTokens > 0 ? (
+                    <span className="text-violet-600">{l.reasoningTokens.toLocaleString()}</span>
+                  ) : (
+                    <span className="text-gray-300">—</span>
+                  )}
+                </td>
                 <td className="px-4 py-2.5 text-gray-600">${l.cost.toFixed(3)}</td>
               </tr>
             ))}
             {loadingLogs && (
               <tr>
-                <td colSpan={9} className="px-4 py-10 text-center text-sm text-gray-400">
+                <td colSpan={11} className="px-4 py-10 text-center text-sm text-gray-400">
                   加载中…
                 </td>
               </tr>
             )}
             {!loadingLogs && filtered.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-4 py-10 text-center text-sm text-gray-400">
+                <td colSpan={11} className="px-4 py-10 text-center text-sm text-gray-400">
                   没有符合条件的日志记录
                 </td>
               </tr>

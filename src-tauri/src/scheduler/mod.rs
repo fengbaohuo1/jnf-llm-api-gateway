@@ -30,6 +30,10 @@ pub struct ChannelChoice {
     pub weight: i64,
     /// 每 1k token 成本单价（元），转发层记账用
     pub price_per_1k_tokens: f64,
+    /// 每 1k token 缓存命中单价（元），0 = 未配置（按正常单价计费）
+    pub cache_price_per_1k_tokens: f64,
+    /// 每 1k token 思考（reasoning）单价（元），0 = 未配置（按正常输出单价计费）
+    pub reasoning_price_per_1k_tokens: f64,
 }
 
 /// 构建有序故障转移队列：
@@ -40,8 +44,8 @@ pub async fn select_channels(
     pool: &SqlitePool,
     requested_model: &str,
 ) -> Result<Vec<ChannelChoice>, String> {
-    let rows: Vec<(String, String, String, String, String, String, i64, i64, f64)> = sqlx::query_as(
-        "SELECT id, name, type, base_url, api_key_encrypted, model, priority, weight, price_per_1k_tokens FROM channels
+    let rows: Vec<(String, String, String, String, String, String, i64, i64, f64, f64, f64)> = sqlx::query_as(
+        "SELECT id, name, type, base_url, api_key_encrypted, model, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens FROM channels
          WHERE status = 'active' AND (model = ?1 OR model = '')
          ORDER BY priority DESC",
     )
@@ -52,7 +56,7 @@ pub async fn select_channels(
 
     let candidates: Vec<ChannelChoice> = rows
         .into_iter()
-        .map(|(id, name, channel_type, base_url, api_key, model, priority, weight, price_per_1k_tokens)| ChannelChoice {
+        .map(|(id, name, channel_type, base_url, api_key, model, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens)| ChannelChoice {
             id,
             name,
             channel_type,
@@ -62,6 +66,8 @@ pub async fn select_channels(
             priority,
             weight,
             price_per_1k_tokens,
+            cache_price_per_1k_tokens,
+            reasoning_price_per_1k_tokens,
         })
         .collect();
 
@@ -138,6 +144,8 @@ mod tests {
                 model TEXT, status TEXT, api_key_encrypted TEXT,
                 latency_ms INTEGER, priority INTEGER, weight INTEGER,
                 price_per_1k_tokens REAL DEFAULT 0,
+                cache_price_per_1k_tokens REAL DEFAULT 0,
+                reasoning_price_per_1k_tokens REAL DEFAULT 0,
                 created_at TEXT, updated_at TEXT)",
         )
         .execute(&pool)

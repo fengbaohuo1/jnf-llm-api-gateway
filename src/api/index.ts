@@ -14,6 +14,8 @@ const mapChannel = (c: RawChannel): Channel => ({
   priority: c.priority,
   weight: c.weight,
   pricePer1kTokens: c.pricePer1kTokens,
+  cachePricePer1kTokens: c.cachePricePer1kTokens,
+  reasoningPricePer1kTokens: c.reasoningPricePer1kTokens,
   createdAt: c.createdAt,
 });
 
@@ -38,6 +40,8 @@ const mapLog = (l: RawLog): RequestLog => ({
   status: l.status,
   latencyMs: l.latencyMs,
   tokens: l.totalTokens,
+  cacheHitTokens: l.cacheHitTokens,
+  reasoningTokens: l.reasoningTokens,
   cost: l.cost,
 });
 
@@ -56,6 +60,8 @@ export const api = {
     priority: number;
     weight: number;
     pricePer1kTokens: number;
+    cachePricePer1kTokens: number;
+    reasoningPricePer1kTokens: number;
   }): Promise<Channel> => {
     const c = await invoke<RawChannel>("create_channel", { ...input });
     return mapChannel(c);
@@ -72,6 +78,8 @@ export const api = {
     priority: number;
     weight: number;
     pricePer1kTokens: number;
+    cachePricePer1kTokens: number;
+    reasoningPricePer1kTokens: number;
   }): Promise<void> => invoke("update_channel", { ...input }),
 
   deleteChannel: (id: string) => invoke("delete_channel", { id }),
@@ -133,6 +141,8 @@ interface RawChannel {
   priority: number;
   weight: number;
   pricePer1kTokens: number;
+  cachePricePer1kTokens: number;
+  reasoningPricePer1kTokens: number;
   createdAt: string;
 }
 interface RawKey {
@@ -167,6 +177,8 @@ interface RawLog {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  cacheHitTokens: number;
+  reasoningTokens: number;
   cost: number;
   error: string | null;
 }

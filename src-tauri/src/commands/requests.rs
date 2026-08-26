@@ -15,7 +15,7 @@ pub async fn list_requests(
     model: Option<String>,
 ) -> Result<Vec<RequestLog>, String> {
     let mut sql = String::from(
-        "SELECT id, timestamp, channel_id, channel_name, key_id, key_name, model, status, latency_ms, prompt_tokens, completion_tokens, total_tokens, cost, error FROM requests WHERE 1=1",
+        "SELECT id, timestamp, channel_id, channel_name, key_id, key_name, model, status, latency_ms, prompt_tokens, completion_tokens, total_tokens, cache_hit_tokens, reasoning_tokens, cost, error FROM requests WHERE 1=1",
     );
     let mut kw: Option<String> = None;
     if let Some(k) = keyword {
@@ -67,6 +67,8 @@ pub async fn insert_request(
     latency_ms: i64,
     prompt_tokens: i64,
     completion_tokens: i64,
+    cache_hit_tokens: i64,
+    reasoning_tokens: i64,
     cost: f64,
     error: Option<String>,
 ) -> Result<(), String> {
@@ -81,6 +83,8 @@ pub async fn insert_request(
         latency_ms,
         prompt_tokens,
         completion_tokens,
+        cache_hit_tokens,
+        reasoning_tokens,
         cost,
         error.as_deref(),
     )
@@ -90,6 +94,7 @@ pub async fn insert_request(
 
 /// 记账：写 requests 日志 + 累加 daily_stats + 扣减 keys.used_tokens。
 /// 转发代理（proxy 模块）与 `insert_request` 命令共用，返回新请求 id 供安全日志关联。
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn log_request(
     pool: &SqlitePool,
     channel_id: &str,
@@ -101,6 +106,8 @@ pub(crate) async fn log_request(
     latency_ms: i64,
     prompt_tokens: i64,
     completion_tokens: i64,
+    cache_hit_tokens: i64,
+    reasoning_tokens: i64,
     cost: f64,
     error: Option<&str>,
 ) -> Result<String, String> {
@@ -109,9 +116,9 @@ pub(crate) async fn log_request(
     let total = prompt_tokens + completion_tokens;
     let p = pool;
     sqlx::query(
-        "INSERT INTO requests (id, timestamp, channel_id, channel_name, key_id, key_name, model, status, latency_ms, prompt_tokens, completion_tokens, total_tokens, cost, error) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+        "INSERT INTO requests (id, timestamp, channel_id, channel_name, key_id, key_name, model, status, latency_ms, prompt_tokens, completion_tokens, total_tokens, cache_hit_tokens, reasoning_tokens, cost, error) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
     )
-    .bind(&id).bind(&ts).bind(channel_id).bind(channel_name).bind(key_id).bind(key_name).bind(model).bind(status).bind(latency_ms).bind(prompt_tokens).bind(completion_tokens).bind(total).bind(cost).bind(error)
+    .bind(&id).bind(&ts).bind(channel_id).bind(channel_name).bind(key_id).bind(key_name).bind(model).bind(status).bind(latency_ms).bind(prompt_tokens).bind(completion_tokens).bind(total).bind(cache_hit_tokens).bind(reasoning_tokens).bind(cost).bind(error)
     .execute(p)
     .await
     .map_err(|e| e.to_string())?;

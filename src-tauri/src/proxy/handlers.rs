@@ -181,10 +181,14 @@ async fn handle_non_stream_completion(
                     }
                 }
 
-                // ⑥ 记账（成功）
-                let (prompt_tokens, completion_tokens) = super::forward::extract_tokens(resp_value.get("usage"));
-                let total = prompt_tokens + completion_tokens;
-                let cost = total as f64 / 1000.0 * channel.price_per_1k_tokens;
+                // ⑥ 记账（成功）：缓存/思考感知拆分计费
+                let tokens = super::forward::extract_usage(resp_value.get("usage"));
+                let cost = super::forward::compute_cost(
+                    tokens,
+                    channel.price_per_1k_tokens,
+                    channel.cache_price_per_1k_tokens,
+                    channel.reasoning_price_per_1k_tokens,
+                );
                 match log_request(
                     &state.pool,
                     &channel.id,
@@ -194,8 +198,10 @@ async fn handle_non_stream_completion(
                     &prepared.model,
                     1,
                     latency as i64,
-                    prompt_tokens,
-                    completion_tokens,
+                    tokens.prompt,
+                    tokens.completion,
+                    tokens.cache_hit,
+                    tokens.reasoning,
                     cost,
                     None,
                 )
@@ -222,6 +228,8 @@ async fn handle_non_stream_completion(
                     &prepared.model,
                     0,
                     started.elapsed().as_millis() as i64,
+                    0,
+                    0,
                     0,
                     0,
                     0.0,
@@ -278,6 +286,8 @@ async fn handle_stream_completion(
                     &prepared.model,
                     0,
                     started.elapsed().as_millis() as i64,
+                    0,
+                    0,
                     0,
                     0,
                     0.0,

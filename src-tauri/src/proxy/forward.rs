@@ -97,15 +97,64 @@ pub(crate) async fn forward_stream_to_channel(
     Ok(resp)
 }
 
-/// 从上游响应的 usage 中提取 token 数（缺失按 0 计）
-pub(crate) fn extract_tokens(usage: Option<&Value>) -> (i64, i64) {
+/// 上游 usage 中的 token 明细（缓存/思考感知计费的输入）
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct UsageTokens {
+    pub prompt: i64,
+    pub completion: i64,
+    /// 输入中命中前缀缓存的 token 数（≤ prompt）
+    pub cache_hit: i64,
+    /// 输出中用于推理（thinking）的 token 数（≤ completion）
+    pub reasoning: i64,
+}
+
+/// 从上游响应的 usage 中提取 token 明细（缺失按 0 计）。
+/// 明细字段兼容主流厂商格式：
+/// - 缓存命中：DeepSeek `prompt_cache_hit_tokens`；OpenAI `prompt_tokens_details.cached_tokens`
+/// - 思考 token：DeepSeek-R1 / OpenAI o 系列 `completion_tokens_details.reasoning_tokens`
+pub(crate) fn extract_usage(usage: Option<&Value>) -> UsageTokens {
     let get = |k: &str| {
         usage
             .and_then(|u| u.get(k))
             .and_then(|v| v.as_i64())
             .unwrap_or(0)
     };
-    (get("prompt_tokens"), get("completion_tokens"))
+    let prompt = get("prompt_tokens");
+    let completion = get("completion_tokens");
+    let cache_hit = get("prompt_cache_hit_tokens").max(
+        usage
+            .and_then(|u| u.get("prompt_tokens_details"))
+            .and_then(|d| d.get("cached_tokens"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0),
+    );
+    let reasoning = usage
+        .and_then(|u| u.get("completion_tokens_details"))
+        .and_then(|d| d.get("reasoning_tokens"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    UsageTokens {
+        prompt,
+        completion,
+        cache_hit: cache_hit.min(prompt),       // 命中不可能超过输入总数
+        reasoning: reasoning.min(completion),   // 思考不可能超过输出总数
+    }
+}
+
+/// 缓存/思考感知计费：
+/// - 输入：未命中部分 × 正常单价，命中部分 × 缓存单价
+/// - 输出：思考部分 × 思考单价，其余 × 正常单价
+/// 缓存单价 / 思考单价 ≤ 0 视为未配置，回落到正常单价（与旧行为一致）。
+pub(crate) fn compute_cost(tokens: UsageTokens, price: f64, cache_price: f64, reasoning_price: f64) -> f64 {
+    let cache_price = if cache_price > 0.0 { cache_price } else { price };
+    let reasoning_price = if reasoning_price > 0.0 { reasoning_price } else { price };
+    let miss = (tokens.prompt - tokens.cache_hit).max(0);
+    let normal_out = (tokens.completion - tokens.reasoning).max(0);
+    (miss as f64 * price
+        + tokens.cache_hit as f64 * cache_price
+        + normal_out as f64 * price
+        + tokens.reasoning as f64 * reasoning_price)
+        / 1000.0
 }
 
 fn truncate(s: &str, max: usize) -> String {
@@ -160,10 +209,79 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn extract_tokens_handles_missing_usage() {
-        assert_eq!(extract_tokens(None), (0, 0));
-        let usage = serde_json::json!({"prompt_tokens": 10, "completion_tokens": 3});
-        assert_eq!(extract_tokens(Some(&usage)), (10, 3));
+    async fn extract_usage_handles_missing() {
+        let t = extract_usage(None);
+        assert_eq!(t, UsageTokens::default());
+    }
+
+    #[tokio::test]
+    async fn extract_usage_deepseek_format() {
+        // DeepSeek：缓存命中平铺在 usage；思考 token 在 completion_tokens_details
+        let usage = serde_json::json!({
+            "prompt_tokens": 100,
+            "prompt_cache_hit_tokens": 80,
+            "prompt_cache_miss_tokens": 20,
+            "completion_tokens": 50,
+            "completion_tokens_details": { "reasoning_tokens": 30 }
+        });
+        let t = extract_usage(Some(&usage));
+        assert_eq!(t.prompt, 100);
+        assert_eq!(t.completion, 50);
+        assert_eq!(t.cache_hit, 80);
+        assert_eq!(t.reasoning, 30);
+    }
+
+    #[tokio::test]
+    async fn extract_usage_openai_format() {
+        // OpenAI：prompt_tokens_details.cached_tokens 嵌套
+        let usage = serde_json::json!({
+            "prompt_tokens": 100,
+            "prompt_tokens_details": { "cached_tokens": 75 },
+            "completion_tokens": 50,
+            "completion_tokens_details": { "reasoning_tokens": 20 }
+        });
+        let t = extract_usage(Some(&usage));
+        assert_eq!(t.cache_hit, 75);
+        assert_eq!(t.reasoning, 20);
+    }
+
+    #[tokio::test]
+    async fn extract_usage_clamps_details() {
+        // 上游数据异常：命中/思考数超过总数，截断
+        let usage = serde_json::json!({
+            "prompt_tokens": 10,
+            "prompt_cache_hit_tokens": 999,
+            "completion_tokens": 5,
+            "completion_tokens_details": { "reasoning_tokens": 999 }
+        });
+        let t = extract_usage(Some(&usage));
+        assert_eq!(t.cache_hit, 10);
+        assert_eq!(t.reasoning, 5);
+    }
+
+    #[test]
+    fn compute_cost_splits_cache_pricing() {
+        // 无缓存/思考单价配置：全部按正常单价（与旧行为一致）
+        let tokens = UsageTokens { prompt: 1000, completion: 500, cache_hit: 600, reasoning: 0 };
+        assert_eq!(compute_cost(tokens, 2.0, 0.0, 0.0), 3.0); // (1000+500)/1000×2
+        // 有缓存单价：命中部分用缓存价
+        // miss=400×2 + hit=600×0.2 + completion=500×2 = 800+120+1000 = 1920 → 1.92
+        assert!((compute_cost(tokens, 2.0, 0.2, 0.0) - 1.92).abs() < 1e-9);
+    }
+
+    #[test]
+    fn compute_cost_splits_reasoning_pricing() {
+        let tokens = UsageTokens { prompt: 0, completion: 1000, cache_hit: 0, reasoning: 300 };
+        // 思考部分用思考单价：300×0.5 + 普通输出 700×2 = 150+1400 = 1550 → 1.55
+        assert!((compute_cost(tokens, 2.0, 0.0, 0.5) - 1.55).abs() < 1e-9);
+        // 思考单价未配置：全部按正常输出价 → 1000×2/1000 = 2.0
+        assert_eq!(compute_cost(tokens, 2.0, 0.0, 0.0), 2.0);
+    }
+
+    #[test]
+    fn compute_cost_zero_tokens() {
+        let tokens = UsageTokens::default();
+        assert_eq!(compute_cost(tokens, 2.0, 0.2, 0.5), 0.0);
     }
 
     #[test]

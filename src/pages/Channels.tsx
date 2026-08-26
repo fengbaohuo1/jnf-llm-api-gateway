@@ -17,9 +17,23 @@ type FormState = {
   priority: number;
   weight: number;
   pricePer1kTokens: number;
+  cachePricePer1kTokens: number;
+  reasoningPricePer1kTokens: number;
 };
 
-const emptyForm: FormState = { name: "", type: "OpenAI", baseUrl: "", model: "", apiKey: "", status: "active", priority: 0, weight: 1, pricePer1kTokens: 0 };
+const emptyForm: FormState = {
+  name: "",
+  type: "OpenAI",
+  baseUrl: "",
+  model: "",
+  apiKey: "",
+  status: "active",
+  priority: 0,
+  weight: 1,
+  pricePer1kTokens: 0,
+  cachePricePer1kTokens: 0,
+  reasoningPricePer1kTokens: 0,
+};
 
 const inputCls =
   "w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
@@ -105,36 +119,64 @@ function ChannelFormModal({
             </select>
           </Field>
         </div>
-        <div className="grid grid-cols-3 gap-4">
-          <Field label="优先级" hint="故障转移时越大的越先尝试（主渠道 = 最高优先级）">
-            <input
-              value={form.priority}
-              onChange={(e) => setForm((f) => ({ ...f, priority: Number(e.target.value) || 0 }))}
-              className={inputCls}
-              type="number"
-              placeholder="0"
-            />
-          </Field>
-          <Field label="权重" hint="同优先级内越大越可能被先选中">
-            <input
-              value={form.weight}
-              onChange={(e) => setForm((f) => ({ ...f, weight: Number(e.target.value) || 0 }))}
-              className={inputCls}
-              type="number"
-              placeholder="1"
-            />
-          </Field>
-          <Field label="单价（元/1k tokens）" hint="转发代理记账用，成本 = 总 tokens ÷ 1000 × 单价">
-            <input
-              value={form.pricePer1kTokens}
-              onChange={(e) => setForm((f) => ({ ...f, pricePer1kTokens: Number(e.target.value) || 0 }))}
-              className={inputCls}
-              type="number"
-              step="0.0001"
-              min="0"
-              placeholder="0"
-            />
-          </Field>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="优先级" hint="故障转移时越大的越先尝试（主渠道 = 最高优先级）">
+              <input
+                value={form.priority}
+                onChange={(e) => setForm((f) => ({ ...f, priority: Number(e.target.value) || 0 }))}
+                className={inputCls}
+                type="number"
+                placeholder="0"
+              />
+            </Field>
+            <Field label="权重" hint="同优先级内越大越可能被先选中">
+              <input
+                value={form.weight}
+                onChange={(e) => setForm((f) => ({ ...f, weight: Number(e.target.value) || 0 }))}
+                className={inputCls}
+                type="number"
+                placeholder="1"
+              />
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="单价（元/1k tokens）" hint="转发代理记账用，成本 = tokens ÷ 1000 × 单价">
+              <input
+                value={form.pricePer1kTokens}
+                onChange={(e) => setForm((f) => ({ ...f, pricePer1kTokens: Number(e.target.value) || 0 }))}
+                className={inputCls}
+                type="number"
+                step="0.0001"
+                min="0"
+                placeholder="0"
+              />
+            </Field>
+            <Field label="缓存命中单价（元/1k）" hint="留 0 = 不区分缓存，命中部分按正常单价计费">
+              <input
+                value={form.cachePricePer1kTokens}
+                onChange={(e) => setForm((f) => ({ ...f, cachePricePer1kTokens: Number(e.target.value) || 0 }))}
+                className={inputCls}
+                type="number"
+                step="0.0001"
+                min="0"
+                placeholder="0"
+              />
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="思考单价（元/1k）" hint="DeepSeek-R1 / OpenAI o 系列的 thinking token；留 0 = 按正常输出价">
+              <input
+                value={form.reasoningPricePer1kTokens}
+                onChange={(e) => setForm((f) => ({ ...f, reasoningPricePer1kTokens: Number(e.target.value) || 0 }))}
+                className={inputCls}
+                type="number"
+                step="0.0001"
+                min="0"
+                placeholder="0"
+              />
+            </Field>
+          </div>
         </div>
         <Field label="API Key" hint={initial ? "留空则保持不变" : undefined}>
           <input
@@ -215,6 +257,8 @@ export function Channels() {
           priority: data.priority,
           weight: data.weight,
           pricePer1kTokens: data.pricePer1kTokens,
+          cachePricePer1kTokens: data.cachePricePer1kTokens,
+          reasoningPricePer1kTokens: data.reasoningPricePer1kTokens,
         });
       } else {
         await addChannel({
@@ -226,6 +270,8 @@ export function Channels() {
           priority: data.priority,
           weight: data.weight,
           pricePer1kTokens: data.pricePer1kTokens,
+          cachePricePer1kTokens: data.cachePricePer1kTokens,
+          reasoningPricePer1kTokens: data.reasoningPricePer1kTokens,
         });
       }
       setModalOpen(false);
@@ -351,6 +397,12 @@ export function Channels() {
                     <span>
                       ¥{c.pricePer1kTokens}
                       <span className="text-xs text-gray-400">/1k</span>
+                      {c.cachePricePer1kTokens > 0 && (
+                        <span className="block text-xs text-emerald-500">缓存 ¥{c.cachePricePer1kTokens}</span>
+                      )}
+                      {c.reasoningPricePer1kTokens > 0 && (
+                        <span className="block text-xs text-violet-500">思考 ¥{c.reasoningPricePer1kTokens}</span>
+                      )}
                     </span>
                   ) : (
                     <span className="text-gray-300">—</span>
@@ -404,6 +456,8 @@ export function Channels() {
           priority: editing.priority,
           weight: editing.weight,
           pricePer1kTokens: editing.pricePer1kTokens,
+          cachePricePer1kTokens: editing.cachePricePer1kTokens,
+          reasoningPricePer1kTokens: editing.reasoningPricePer1kTokens,
         } : null}
         onClose={() => setModalOpen(false)}
         onSubmit={handleSubmit}

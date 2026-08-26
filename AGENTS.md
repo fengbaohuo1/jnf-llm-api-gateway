@@ -23,7 +23,7 @@
 - **透传而非字段映射**：请求体原样发上游（只改 URL/Authorization），保留 tools 等扩展字段；适配器层留给测试与协议转换
 - **SSE 流式**：注入 `stream_options.include_usage` 拿精确 token 统计，无则本地估算（1 token ≈ 4 ASCII 或 1.5 非 ASCII 字符）；delta 逐条脱敏；流结束记账
 - **安全**：`security.mode` replace（脱敏后照常，默认）/ block（high 风险拦截）；请求侧 + 响应侧 findings 合并写 security_logs
-- **记账**：`commands::requests::log_request` 统一（proxy 与命令共用）；成本 = tokens/1000 × 渠道 `price_per_1k_tokens`；成功扣配额计费，失败尝试也记日志（status=0）
+- **记账**：`commands::requests::log_request` 统一（proxy 与命令共用）；**缓存/思考感知计费**——`extract_usage` 解析明细（缓存：DeepSeek `prompt_cache_hit_tokens` / OpenAI `prompt_tokens_details.cached_tokens`；思考：`completion_tokens_details.reasoning_tokens`），成本 = 未命中输入与普通输出 × 正常单价 + 命中 × `cache_price_per_1k_tokens` + 思考 × `reasoning_price_per_1k_tokens`（0 = 回落正常价）；requests 表记 `cache_hit_tokens`/`reasoning_tokens`，成功扣配额计费，失败尝试也记日志（status=0）
 - **密钥**：`sk-llmapi-` + 20 位；keys 表只存 SHA-256 hash + key_prefix（明文仅创建时返回一次）；渠道 `api_key_encrypted` 为明文占位，**未做真实加密**
 
 ## 约定与踩坑
@@ -34,5 +34,6 @@
 
 ## 当前进度
 - ✅ 代理全链路：鉴权 → 请求侧脱敏 → 调度 → 透传 + 故障转移 → 响应侧脱敏 → 合并落库 → 记账
-- ✅ 路由：`POST /v1/chat/completions`（非流式/流式分流）、`GET /v1/models`、`GET /health`；26 个单测全绿
+- ✅ 路由：`POST /v1/chat/completions`（非流式/流式分流）、`GET /v1/models`、`GET /health`；32 个单测全绿
+- ✅ 缓存/思考感知计费：迁移 0004/0005（缓存单价 + 思考单价 + requests 明细列），日志页展示命中与思考 token
 - ⏳ 候选：Claude/Gemini 适配器、渠道密钥真实加密、安全规则可配置化、日志页安全事件展示、前端代理状态页

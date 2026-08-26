@@ -17,6 +17,10 @@ pub struct Channel {
     pub weight: i64,
     /// 每 1k token 的成本单价（元），用于转发层记账
     pub price_per_1k_tokens: f64,
+    /// 每 1k token 的缓存命中单价（元），0 = 未配置（按正常单价计费）
+    pub cache_price_per_1k_tokens: f64,
+    /// 每 1k token 的思考（reasoning）单价（元），0 = 未配置（按正常输出单价计费）
+    pub reasoning_price_per_1k_tokens: f64,
     pub created_at: String,
 }
 
@@ -61,6 +65,10 @@ pub struct RequestLog {
     pub prompt_tokens: i64,
     pub completion_tokens: i64,
     pub total_tokens: i64,
+    /// 输入 token 中命中前缀缓存的个数（缓存感知计费用）
+    pub cache_hit_tokens: i64,
+    /// 输出中用于推理（thinking）的 token 数（reasoning 感知计费用）
+    pub reasoning_tokens: i64,
     pub cost: f64,
     pub error: Option<String>,
 }

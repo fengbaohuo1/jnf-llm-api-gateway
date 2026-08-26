@@ -16,6 +16,8 @@ export interface Channel {
   priority: number; // 故障转移优先级，越大越先
   weight: number; // 同优先级权重，越大越可能先被选中
   pricePer1kTokens: number; // 每 1k token 成本（元），转发层记账用
+  cachePricePer1kTokens: number; // 每 1k token 缓存命中成本（元），0 = 不区分缓存
+  reasoningPricePer1kTokens: number; // 每 1k token 思考（reasoning）成本（元），0 = 不区分思考
   createdAt: string;
 }
 
@@ -39,6 +41,8 @@ export interface RequestLog {
   status: number;
   latencyMs: number;
   tokens: number;
+  cacheHitTokens: number; // 输入中命中前缀缓存的 token 数
+  reasoningTokens: number; // 输出中用于思考（reasoning）的 token 数
   cost: number; // USD
 }
 

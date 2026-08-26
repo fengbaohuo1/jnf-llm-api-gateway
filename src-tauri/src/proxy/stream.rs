@@ -16,7 +16,7 @@ use crate::commands::requests::log_request;
 use crate::scheduler::ChannelChoice;
 use crate::security::{Finding, RiskLevel, SecurityScanner};
 
-use super::forward::extract_tokens;
+use super::forward::{compute_cost, extract_usage, UsageTokens};
 use super::handlers::record_security_logs;
 use super::{PreparedRequest, ProxyState};
 
@@ -39,6 +39,8 @@ pub(crate) async fn stream_response(
         &prepared.auth.name,
         &prepared.model,
         channel.price_per_1k_tokens,
+        channel.cache_price_per_1k_tokens,
+        channel.reasoning_price_per_1k_tokens,
         prepared.settings.security_enabled,
         &prepared.settings.security_mode,
         prepared.request_findings.clone(),
@@ -112,12 +114,14 @@ struct StreamStats {
     key_name: String,
     model: String,
     price: f64,
+    cache_price: f64,
+    reasoning_price: f64,
     security_enabled: bool,
     security_mode: String,
     request_findings: Vec<Finding>,
     prompt_chars: (u64, u64),
     completion_chars: (u64, u64),
-    exact_usage: Option<(i64, i64)>,
+    exact_usage: Option<UsageTokens>,
     response_findings: Vec<Finding>,
     started: Instant,
     finished: bool,
@@ -134,6 +138,8 @@ impl StreamStats {
         key_name: &str,
         model: &str,
         price: f64,
+        cache_price: f64,
+        reasoning_price: f64,
         security_enabled: bool,
         security_mode: &str,
         request_findings: Vec<Finding>,
@@ -149,6 +155,8 @@ impl StreamStats {
             key_name: key_name.to_string(),
             model: model.to_string(),
             price,
+            cache_price,
+            reasoning_price,
             security_enabled,
             security_mode: security_mode.to_string(),
             request_findings,
@@ -185,7 +193,7 @@ impl StreamStats {
 
             // 精确 token 统计（stream_options.include_usage 时上游在流尾返回）
             if let Some(usage) = event.get("usage") {
-                self.exact_usage = Some(extract_tokens(Some(usage)));
+                self.exact_usage = Some(extract_usage(Some(usage)));
             }
 
             // delta 内容：字符统计 + 安全扫描/脱敏
@@ -230,15 +238,16 @@ impl StreamStats {
             return;
         }
         self.finished = true;
-        let (prompt, completion) = match self.exact_usage {
-            Some((p, c)) => (p, c),
-            None => (
-                estimate_tokens(self.prompt_chars.0, self.prompt_chars.1),
-                estimate_tokens(self.completion_chars.0, self.completion_chars.1),
-            ),
+        let tokens = match self.exact_usage {
+            Some(t) => t,
+            None => UsageTokens {
+                prompt: estimate_tokens(self.prompt_chars.0, self.prompt_chars.1),
+                completion: estimate_tokens(self.completion_chars.0, self.completion_chars.1),
+                cache_hit: 0, // 估算路径拿不到缓存明细
+                reasoning: 0, // 估算路径拿不到思考明细
+            },
         };
-        let total = prompt + completion;
-        let cost = total as f64 / 1000.0 * self.price;
+        let cost = compute_cost(tokens, self.price, self.cache_price, self.reasoning_price);
         let latency = self.started.elapsed().as_millis() as i64;
         match log_request(
             &self.pool,
@@ -249,8 +258,10 @@ impl StreamStats {
             &self.model,
             status,
             latency,
-            prompt,
-            completion,
+            tokens.prompt,
+            tokens.completion,
+            tokens.cache_hit,
+            tokens.reasoning,
             cost,
             error.as_deref(),
         )
@@ -326,6 +337,8 @@ mod tests {
             "测试密钥",
             "gpt-4o",
             0.0,
+            0.0,
+            0.0,
             true,
             security_mode,
             vec![],
@@ -356,14 +369,25 @@ mod tests {
         // 中文 3 字 + 其他字符计入 completion_chars
         assert!(stats.completion_chars.0 > 0 || stats.completion_chars.1 > 0);
 
-        // usage 行：记录精确 token
+        // usage 行：记录精确 token（含缓存明细解析）
         let usage = format!(
             "data: {}\n\n",
-            serde_json::json!({"choices": [], "usage": {"prompt_tokens": 11, "completion_tokens": 22, "total_tokens": 33}})
+            serde_json::json!({
+                "choices": [],
+                "usage": {
+                    "prompt_tokens": 11,
+                    "prompt_cache_hit_tokens": 5,
+                    "completion_tokens": 22,
+                    "total_tokens": 33
+                }
+            })
         );
         let (_, keep2) = stats.process(usage.as_bytes(), &mut splitter).await;
         assert!(keep2);
-        assert_eq!(stats.exact_usage, Some((11, 22)));
+        assert_eq!(
+            stats.exact_usage,
+            Some(UsageTokens { prompt: 11, completion: 22, cache_hit: 5, reasoning: 0 })
+        );
 
         // [DONE] 与空行透传
         let done = b"data: [DONE]\n\n";

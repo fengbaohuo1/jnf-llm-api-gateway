@@ -189,6 +189,8 @@ pub(crate) mod test_util {
             priority: 0,
             weight: 1,
             price_per_1k_tokens: 0.0,
+            cache_price_per_1k_tokens: 0.0,
+            reasoning_price_per_1k_tokens: 0.0,
         }
     }
 }
