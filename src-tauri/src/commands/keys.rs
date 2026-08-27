@@ -3,7 +3,7 @@ use tauri::State;
 use crate::commands::DbState;
 use crate::models::{ApiKey, CreatedKey};
 
-use super::util::{gen_key_secret, hash_key, new_id, now_iso};
+use super::util::{gen_key_secret, hash_key, new_id, now_iso, record_admin_audit};
 use super::pool;
 
 #[tauri::command]
@@ -49,6 +49,7 @@ pub async fn create_key(
     .execute(pool(&state))
     .await
     .map_err(|e| e.to_string())?;
+    record_admin_audit(pool(&state), "create", "key", Some(&id), Some(&name)).await;
 
     Ok(CreatedKey {
         id,
@@ -64,20 +65,22 @@ pub async fn create_key(
 #[tauri::command]
 pub async fn delete_key(state: State<'_, DbState>, id: String) -> Result<(), String> {
     sqlx::query("DELETE FROM keys WHERE id = ?1")
-        .bind(id)
+        .bind(&id)
         .execute(pool(&state))
         .await
         .map_err(|e| e.to_string())?;
+    record_admin_audit(pool(&state), "delete", "key", Some(&id), None).await;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn toggle_key_status(state: State<'_, DbState>, id: String) -> Result<(), String> {
     sqlx::query("UPDATE keys SET status = CASE WHEN status = 'active' THEN 'disabled' ELSE 'active' END WHERE id = ?1")
-        .bind(id)
+        .bind(&id)
         .execute(pool(&state))
         .await
         .map_err(|e| e.to_string())?;
+    record_admin_audit(pool(&state), "toggle", "key", Some(&id), None).await;
     Ok(())
 }
 
@@ -98,6 +101,7 @@ pub async fn update_key(
         .execute(pool(&state))
         .await
         .map_err(|e| e.to_string())?;
+    record_admin_audit(pool(&state), "update", "key", Some(&id), Some(&name)).await;
     Ok(())
 }
 
@@ -124,6 +128,7 @@ pub async fn rotate_key(state: State<'_, DbState>, id: String) -> Result<Created
         .execute(pool(&state))
         .await
         .map_err(|e| e.to_string())?;
+    record_admin_audit(pool(&state), "rotate", "key", Some(&id), Some(&name)).await;
     Ok(CreatedKey {
         id,
         name,

@@ -55,5 +55,34 @@ export interface SecurityLog {
   category: string;
   risk: "low" | "medium" | "high";
   snippetMasked: string;
+  action: "detected" | "masked" | "blocked";
+  createdAt: string;
+}
+
+export interface SecurityRule {
+  id: string;
+  category: string;
+  risk: "low" | "medium" | "high";
+  pattern: string;
+  matchType: "regex" | "substring";
+  enabled: boolean;
+  action: "record" | "mask" | "block";
+  createdAt: string;
+}
+
+export interface AuthEvent {
+  id: string;
+  keyId: string | null;
+  success: boolean;
+  reason: string | null;
+  createdAt: string;
+}
+
+export interface AdminAudit {
+  id: string;
+  action: string;
+  targetType: string;
+  targetId: string | null;
+  detail: string | null;
   createdAt: string;
 }

@@ -5,6 +5,7 @@ import { Usage } from "./pages/Usage";
 import { Channels } from "./pages/Channels";
 import { Keys } from "./pages/Keys";
 import { Logs } from "./pages/Logs";
+import { Security } from "./pages/Security";
 import { Settings } from "./pages/Settings";
 
 function App() {
@@ -19,6 +20,7 @@ function App() {
             <Route path="/channels" element={<Channels />} />
             <Route path="/keys" element={<Keys />} />
             <Route path="/logs" element={<Logs />} />
+            <Route path="/security" element={<Security />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

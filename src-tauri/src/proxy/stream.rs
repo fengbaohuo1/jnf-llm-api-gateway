@@ -14,7 +14,8 @@ use tokio_stream::StreamExt;
 
 use crate::commands::requests::log_request;
 use crate::scheduler::ChannelChoice;
-use crate::security::{Finding, RiskLevel, SecurityScanner};
+use crate::security::leak::check_leak;
+use crate::security::{decide, Finding, PolicyDecision, RiskLevel, SecurityScanner};
 
 use super::forward::{compute_cost, extract_usage, UsageTokens};
 use super::handlers::record_security_logs;
@@ -44,6 +45,7 @@ pub(crate) async fn stream_response(
         prepared.settings.security_enabled,
         &prepared.settings.security_mode,
         prepared.request_findings.clone(),
+        prepared.request_secrets.clone(),
         prepared.prompt_chars,
         started,
     );
@@ -119,6 +121,8 @@ struct StreamStats {
     security_enabled: bool,
     security_mode: String,
     request_findings: Vec<Finding>,
+    /// 请求侧 high 命中的原文片段（响应侧上下文泄露比对用，不落库）
+    request_secrets: Vec<String>,
     prompt_chars: (u64, u64),
     completion_chars: (u64, u64),
     exact_usage: Option<UsageTokens>,
@@ -143,6 +147,7 @@ impl StreamStats {
         security_enabled: bool,
         security_mode: &str,
         request_findings: Vec<Finding>,
+        request_secrets: Vec<String>,
         prompt_chars: (u64, u64),
         started: Instant,
     ) -> Self {
@@ -160,6 +165,7 @@ impl StreamStats {
             security_enabled,
             security_mode: security_mode.to_string(),
             request_findings,
+            request_secrets,
             prompt_chars,
             completion_chars: (0, 0),
             exact_usage: None,
@@ -196,7 +202,7 @@ impl StreamStats {
                 self.exact_usage = Some(extract_usage(Some(usage)));
             }
 
-            // delta 内容：字符统计 + 安全扫描/脱敏
+            // delta 内容：字符统计 + 安全扫描/脱敏 + 上下文泄露比对
             if let Some(content) = event.pointer_mut("/choices/0/delta/content") {
                 if let serde_json::Value::String(s) = content {
                     let (a, b) = count_chars(s);
@@ -204,8 +210,13 @@ impl StreamStats {
                     self.completion_chars.1 += b;
                     if self.security_enabled {
                         let result = self.scanner.scan(s).await;
+                        let blocked = (self.security_mode == "block" && result.risk >= RiskLevel::High)
+                            || decide(&result.findings) == PolicyDecision::Block;
                         self.response_findings.extend(result.findings);
-                        if self.security_mode == "block" && result.risk >= RiskLevel::High {
+                        if let Some(leak) = check_leak(s, &self.request_secrets) {
+                            self.response_findings.push(leak);
+                        }
+                        if blocked {
                             out.extend_from_slice(
                                 "event: error\ndata: {\"error\":{\"message\":\"安全策略拦截：响应包含高风险内容，已中断\",\"type\":\"invalid_response\",\"code\":\"response_security_blocked\"}}\n\n".as_bytes(),
                             );
@@ -341,6 +352,7 @@ mod tests {
             0.0,
             true,
             security_mode,
+            vec![],
             vec![],
             (0, 0),
             Instant::now(),

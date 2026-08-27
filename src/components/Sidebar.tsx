@@ -5,6 +5,7 @@ import {
   Layers,
   KeyRound,
   ScrollText,
+  Shield,
   Settings,
 } from "lucide-react";
 
@@ -14,6 +15,7 @@ const navItems = [
   { to: "/channels", label: "渠道", icon: Layers },
   { to: "/keys", label: "密钥", icon: KeyRound },
   { to: "/logs", label: "日志", icon: ScrollText },
+  { to: "/security", label: "安全", icon: Shield },
   { to: "/settings", label: "设置", icon: Settings },
 ];
 

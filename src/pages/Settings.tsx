@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { PageHeader, Card } from "../components/ui";
+import { PageHeader, Card, Toggle } from "../components/ui";
 import { Button } from "../components/Modal";
 import { api } from "../api";
 
@@ -41,20 +41,6 @@ function Row({ label, desc, children }: { label: string; desc?: string; children
       </div>
       <div className="sm:w-72">{children}</div>
     </div>
-  );
-}
-
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button
-      type="button"
-      onClick={() => onChange(!checked)}
-      className={`relative h-6 w-11 rounded-full transition-colors ${checked ? "bg-indigo-600" : "bg-gray-300"}`}
-    >
-      <span
-        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${checked ? "left-[22px]" : "left-0.5"}`}
-      />
-    </button>
   );
 }
 

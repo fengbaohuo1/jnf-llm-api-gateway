@@ -66,3 +66,24 @@ pub fn mask(secret: &str) -> String {
         format!("{}••••{}", &secret[..4], &secret[secret.len() - 4..])
     }
 }
+
+/// 管理操作审计：渠道/密钥/设置/规则的变更留痕（写失败静默，不影响主流程）
+pub async fn record_admin_audit(
+    pool: &sqlx::SqlitePool,
+    action: &str,
+    target_type: &str,
+    target_id: Option<&str>,
+    detail: Option<&str>,
+) {
+    let _ = sqlx::query(
+        "INSERT INTO admin_audit_logs (id, action, target_type, target_id, detail, created_at) VALUES (?1,?2,?3,?4,?5,?6)",
+    )
+    .bind(new_id("aud"))
+    .bind(action)
+    .bind(target_type)
+    .bind(target_id)
+    .bind(detail)
+    .bind(now_iso())
+    .execute(pool)
+    .await;
+}

@@ -15,7 +15,8 @@ use sqlx::SqlitePool;
 use crate::commands::requests::log_request;
 use crate::commands::util::{new_id, now_iso};
 use crate::scheduler::select_channels;
-use crate::security::{Finding, RiskLevel};
+use crate::security::leak::check_leak;
+use crate::security::{decide, Finding, PolicyDecision, RiskLevel, ScanResult};
 
 use super::auth::{authenticate, AuthError};
 use super::forward::{forward_stream_to_channel, forward_to_channel};
@@ -86,6 +87,7 @@ async fn prepare_request(
 
     // ③ 请求侧安全扫描 / 脱敏
     let mut request_findings: Vec<Finding> = Vec::new();
+    let mut request_secrets: Vec<String> = Vec::new();
     let mut prompt_chars = (0u64, 0u64);
     if settings.security_enabled {
         if let Some(messages) = body_value.get_mut("messages").and_then(|m| m.as_array_mut()) {
@@ -97,9 +99,11 @@ async fn prepare_request(
                     continue;
                 };
                 let result = state.scanner.scan(s).await;
+                let blocked = should_block(&settings.security_mode, &result);
                 request_findings.extend(result.findings);
-                if settings.security_mode == "block" && result.risk >= RiskLevel::High {
-                    return Err(json_error(400, "安全策略拦截：检测到高风险内容（密钥/证件等敏感信息）", "security_blocked"));
+                request_secrets.extend(result.high_fragments);
+                if blocked {
+                    return Err(json_error(400, "安全策略拦截：检测到高风险内容（密钥/证件/带毒命令等）", "security_blocked"));
                 }
                 *s = result.sanitized;
             }
@@ -133,8 +137,14 @@ async fn prepare_request(
         model,
         queue,
         request_findings,
+        request_secrets,
         prompt_chars,
     })
+}
+
+/// 是否应拦截：全局 block 模式且 high，或任一规则显式配置了 block（与全局模式无关）
+fn should_block(mode: &str, result: &ScanResult) -> bool {
+    (mode == "block" && result.risk >= RiskLevel::High) || decide(&result.findings) == PolicyDecision::Block
 }
 
 /// 非流式聊天补全：固定走主渠道，失败按序转移（5xx/429/超时/网络可转移，4xx 直接返回）
@@ -160,7 +170,7 @@ async fn handle_non_stream_completion(
             Ok(mut resp_value) => {
                 let latency = started.elapsed().as_millis() as u64;
 
-                // ⑤ 响应侧安全扫描 / 脱敏
+                // ⑤ 响应侧安全扫描 / 脱敏（含上下文泄露比对：输出复述请求中的凭证）
                 let mut response_findings: Vec<Finding> = Vec::new();
                 if prepared.settings.security_enabled {
                     if let Some(choices) = resp_value.get_mut("choices").and_then(|c| c.as_array_mut()) {
@@ -172,8 +182,12 @@ async fn handle_non_stream_completion(
                                 continue;
                             };
                             let result = state.scanner.scan(s).await;
+                            let blocked = should_block(&prepared.settings.security_mode, &result);
                             response_findings.extend(result.findings);
-                            if prepared.settings.security_mode == "block" && result.risk >= RiskLevel::High {
+                            if let Some(leak) = check_leak(s, &prepared.request_secrets) {
+                                response_findings.push(leak);
+                            }
+                            if blocked {
                                 return json_error(502, "安全策略拦截：响应包含高风险内容，已丢弃", "response_security_blocked");
                             }
                             *s = result.sanitized;
@@ -358,7 +372,7 @@ pub(crate) async fn handle_not_found() -> Response {
 
 // ---------------- 安全日志落库 ----------------
 
-/// 请求侧 + 响应侧发现合并写入 security_logs（每个 finding 一行）
+/// 请求侧 + 响应侧发现合并写入 security_logs（每个 finding 一行，含处置动作）
 pub(crate) async fn record_security_logs(
     pool: &SqlitePool,
     req_id: &str,
@@ -367,21 +381,17 @@ pub(crate) async fn record_security_logs(
 ) {
     for (stage, findings) in [("request", request_findings), ("response", response_findings)] {
         for f in findings {
-            let risk = match f.risk {
-                RiskLevel::Low => "low",
-                RiskLevel::Medium => "medium",
-                RiskLevel::High => "high",
-            };
             let result = sqlx::query(
-                "INSERT INTO security_logs (id, request_id, stage, rule_id, category, risk, snippet_masked, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+                "INSERT INTO security_logs (id, request_id, stage, rule_id, category, risk, snippet_masked, action, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
             )
             .bind(new_id("sec"))
             .bind(req_id)
             .bind(stage)
             .bind(&f.rule_id)
             .bind(&f.category)
-            .bind(risk)
+            .bind(f.risk.as_str())
             .bind(&f.snippet_masked)
+            .bind(&f.action)
             .bind(now_iso())
             .execute(pool)
             .await;

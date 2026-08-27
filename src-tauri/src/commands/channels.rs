@@ -3,7 +3,7 @@ use tauri::State;
 use crate::commands::DbState;
 use crate::models::Channel;
 
-use super::util::{mask, new_id, now_iso};
+use super::util::{mask, new_id, now_iso, record_admin_audit};
 use super::pool;
 
 #[tauri::command]
@@ -60,6 +60,7 @@ pub async fn create_channel(
     .execute(pool(&state))
     .await
     .map_err(|e| e.to_string())?;
+    record_admin_audit(pool(&state), "create", "channel", Some(&id), Some(&name)).await;
 
     Ok(Channel {
         id,
@@ -102,8 +103,8 @@ pub async fn update_channel(
                 priority = ?8, weight = ?9, price_per_1k_tokens = ?10, cache_price_per_1k_tokens = ?11, reasoning_price_per_1k_tokens = ?12, updated_at = ?13
          WHERE id = ?1",
     )
-    .bind(id)
-    .bind(name)
+    .bind(id.as_str())
+    .bind(name.as_str())
     .bind(type_)
     .bind(base_url)
     .bind(model)
@@ -118,27 +119,30 @@ pub async fn update_channel(
     .execute(pool(&state))
     .await
     .map_err(|e| e.to_string())?;
+    record_admin_audit(pool(&state), "update", "channel", Some(&id), Some(&name)).await;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn delete_channel(state: State<'_, DbState>, id: String) -> Result<(), String> {
     sqlx::query("DELETE FROM channels WHERE id = ?1")
-        .bind(id)
+        .bind(&id)
         .execute(pool(&state))
         .await
         .map_err(|e| e.to_string())?;
+    record_admin_audit(pool(&state), "delete", "channel", Some(&id), None).await;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn toggle_channel_status(state: State<'_, DbState>, id: String) -> Result<(), String> {
     sqlx::query("UPDATE channels SET status = CASE WHEN status = 'active' THEN 'disabled' ELSE 'active' END, updated_at = ?2 WHERE id = ?1")
-        .bind(id)
+        .bind(&id)
         .bind(now_iso())
         .execute(pool(&state))
         .await
         .map_err(|e| e.to_string())?;
+    record_admin_audit(pool(&state), "toggle", "channel", Some(&id), None).await;
     Ok(())
 }
 

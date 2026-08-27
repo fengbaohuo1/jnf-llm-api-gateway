@@ -1,5 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ApiKey, Channel, ChannelStatus, ChannelType, RequestLog, SecurityLog } from "../types";
+import type {
+  ApiKey,
+  Channel,
+  ChannelStatus,
+  ChannelType,
+  RequestLog,
+  SecurityLog,
+  SecurityRule,
+} from "../types";
 
 // 后端命令返回的字段是 camelCase；这里映射回前端结构。
 const mapChannel = (c: RawChannel): Channel => ({
@@ -108,8 +116,12 @@ export const api = {
   insertRequest: (input: Record<string, unknown>) => invoke("insert_request", { ...input }),
 
   // ---- Security logs ----
-  listSecurityLogs: (requestId?: string) =>
-    invoke<RawSecurityLog[]>("list_security_logs", { requestId: requestId ?? null }).then((rows) =>
+  listSecurityLogs: (input?: { requestId?: string; risk?: string; stage?: string }) =>
+    invoke<RawSecurityLog[]>("list_security_logs", {
+      requestId: input?.requestId ?? null,
+      risk: input?.risk ?? null,
+      stage: input?.stage ?? null,
+    }).then((rows) =>
       rows.map((l) => ({
         id: l.id,
         requestId: l.requestId,
@@ -118,9 +130,55 @@ export const api = {
         category: l.category,
         risk: l.risk as SecurityLog["risk"],
         snippetMasked: l.snippetMasked,
+        action: l.action as SecurityLog["action"],
         createdAt: l.createdAt,
       })),
     ),
+
+  // ---- Security rules ----
+  listSecurityRules: () => invoke<RawSecurityRule[]>("list_security_rules").then((rows) =>
+    rows.map((r) => ({
+      id: r.id,
+      category: r.category,
+      risk: r.risk as SecurityRule["risk"],
+      pattern: r.pattern,
+      matchType: r.matchType as SecurityRule["matchType"],
+      enabled: r.enabled,
+      action: r.action as SecurityRule["action"],
+      createdAt: r.createdAt,
+    })),
+  ),
+  addSecurityRule: (input: { category: string; risk: string; pattern: string; action: string; matchType: string }) =>
+    invoke("add_security_rule", { ...input }),
+  updateSecurityRule: (input: { id: string; category: string; risk: string; pattern: string; action: string; matchType: string }) =>
+    invoke("update_security_rule", { ...input }),
+  toggleSecurityRule: (id: string) => invoke("toggle_security_rule", { id }),
+  setSecurityRulesEnabled: (ids: string[], enabled: boolean) =>
+    invoke("set_security_rules_enabled", { ids, enabled }),
+  deleteSecurityRule: (id: string) => invoke("delete_security_rule", { id }),
+
+  // ---- Audit (auth events / admin audits) ----
+  listAuthEvents: (limit?: number) => invoke<RawAuthEvent[]>("list_auth_events", { limit: limit ?? 100 }).then((rows) =>
+    rows.map((e) => ({
+      id: e.id,
+      keyId: e.keyId,
+      success: e.success,
+      reason: e.reason,
+      createdAt: e.createdAt,
+    })),
+  ),
+  listAdminAudits: (limit?: number) =>
+    invoke<RawAdminAudit[]>("list_admin_audits", { limit: limit ?? 100 }).then((rows) =>
+      rows.map((a) => ({
+        id: a.id,
+        action: a.action,
+        targetType: a.targetType,
+        targetId: a.targetId,
+        detail: a.detail,
+        createdAt: a.createdAt,
+      })),
+    ),
+  securityStats: (days: number) => invoke<SecurityStats>("security_stats", { days }),
 
   // ---- Settings ----
   listSettings: () => invoke<{ key: string; value: string }[]>("list_settings"),
@@ -204,5 +262,38 @@ interface RawSecurityLog {
   category: string;
   risk: string;
   snippetMasked: string;
+  action: string;
   createdAt: string;
+}
+interface RawSecurityRule {
+  id: string;
+  category: string;
+  risk: string;
+  pattern: string;
+  matchType: string;
+  enabled: boolean;
+  action: string;
+  createdAt: string;
+}
+interface RawAuthEvent {
+  id: string;
+  keyId: string | null;
+  success: boolean;
+  reason: string | null;
+  createdAt: string;
+}
+interface RawAdminAudit {
+  id: string;
+  action: string;
+  targetType: string;
+  targetId: string | null;
+  detail: string | null;
+  createdAt: string;
+}
+/** security_stats 聚合结果（元组 = [分组值, 数量]） */
+interface SecurityStats {
+  byRisk: [string, number][];
+  byStage: [string, number][];
+  byAction: [string, number][];
+  daily: [string, number][];
 }

@@ -19,3 +19,21 @@ export function Card({ children, className = "" }: { children: ReactNode; classN
     </div>
   );
 }
+
+/** 开关（Switch）：通用启停控件 */
+export function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!checked)}
+      disabled={disabled}
+      role="switch"
+      aria-checked={checked}
+      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50 ${checked ? "bg-indigo-600" : "bg-gray-300"}`}
+    >
+      <span
+        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${checked ? "left-[22px]" : "left-0.5"}`}
+      />
+    </button>
+  );
+}

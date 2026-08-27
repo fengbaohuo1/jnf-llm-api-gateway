@@ -3,7 +3,7 @@ use tauri::State;
 use crate::commands::DbState;
 use crate::models::Setting;
 
-use super::util::now_iso;
+use super::util::{now_iso, record_admin_audit};
 use super::pool;
 
 #[tauri::command]
@@ -21,8 +21,9 @@ pub async fn set_setting(state: State<'_, DbState>, key: String, value: String) 
         "INSERT INTO settings (key, value, updated_at) VALUES (?1,?2,?3)
          ON CONFLICT(key) DO UPDATE SET value = ?2, updated_at = ?3",
     )
-    .bind(key).bind(value).bind(now_iso())
+    .bind(&key).bind(&value).bind(now_iso())
     .execute(pool(&state)).await.map_err(|e| e.to_string())?;
+    record_admin_audit(pool(&state), "set", "setting", Some(&key), Some(&value)).await;
     Ok(())
 }
 

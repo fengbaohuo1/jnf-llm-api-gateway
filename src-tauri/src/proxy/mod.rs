@@ -56,6 +56,8 @@ pub(crate) struct PreparedRequest {
     pub(crate) model: String,
     pub(crate) queue: Vec<crate::scheduler::ChannelChoice>,
     pub(crate) request_findings: Vec<crate::security::Finding>,
+    /// 请求侧 high 命中的原文片段（内存态，响应侧上下文泄露比对用，不落库）
+    pub(crate) request_secrets: Vec<String>,
     /// 请求侧消息总字符数（流式无精确 usage 时的估算输入）
     pub(crate) prompt_chars: (u64, u64),
 }

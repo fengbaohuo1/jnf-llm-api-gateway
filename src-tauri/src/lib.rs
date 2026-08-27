@@ -37,8 +37,10 @@ pub fn run() {
             app.manage(DbState(pool.clone()));
 
             // 启动转发代理（本地 HTTP 服务，端口取 settings server.port）
+            // 安全扫描器：从 DB 加载规则并定时刷新（规则改动 30s 内生效）
+            let scanner_pool = pool.clone();
             tauri::async_runtime::spawn(async move {
-                proxy::serve(pool, Arc::new(security::RuleScanner::new())).await;
+                proxy::serve(pool, Arc::new(security::RefreshScanner::new(scanner_pool))).await;
             });
 
             Ok(())
@@ -63,6 +65,15 @@ pub fn run() {
             commands::requests::insert_request,
             // security
             commands::security::list_security_logs,
+            commands::security::list_security_rules,
+            commands::security::add_security_rule,
+            commands::security::update_security_rule,
+            commands::security::toggle_security_rule,
+            commands::security::set_security_rules_enabled,
+            commands::security::delete_security_rule,
+            commands::security::list_auth_events,
+            commands::security::list_admin_audits,
+            commands::security::security_stats,
             // settings
             commands::settings::list_settings,
             commands::settings::set_setting,

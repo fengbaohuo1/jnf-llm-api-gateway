@@ -1,8 +1,10 @@
 //! 密钥鉴权与配额检查。
+//! 每次鉴权尝试（成功/失败，含匿名失败）都会写入 auth_events 审计表——
+//! 匿名失败是暴力破解检测的数据基础。
 
 use sqlx::SqlitePool;
 
-use crate::commands::util::{hash_key, now_iso};
+use crate::commands::util::{hash_key, new_id, now_iso};
 
 /// 鉴权通过的密钥身份
 pub(crate) struct AuthKey {
@@ -12,12 +14,26 @@ pub(crate) struct AuthKey {
 
 #[derive(Debug)]
 pub(crate) enum AuthError {
-    /// 密钥不存在 / 格式错（无身份，不记日志）
+    /// 密钥不存在 / 格式错（无身份）
     Unauthorized,
     /// 已禁用 / 已过期（身份已知）
     Forbidden(String),
     /// 配额用尽
     QuotaExceeded,
+}
+
+/// 写入一条鉴权事件（审计失败静默，不阻断鉴权主流程）
+async fn record_auth_event(pool: &SqlitePool, key_id: Option<&str>, success: bool, reason: Option<&str>) {
+    let _ = sqlx::query(
+        "INSERT INTO auth_events (id, key_id, success, reason, created_at) VALUES (?1,?2,?3,?4,?5)",
+    )
+    .bind(new_id("aev"))
+    .bind(key_id)
+    .bind(success as i64)
+    .bind(reason)
+    .bind(now_iso())
+    .execute(pool)
+    .await;
 }
 
 /// 校验 Authorization: Bearer <sk-llmapi-xxx>，返回密钥身份
@@ -31,6 +47,7 @@ pub(crate) async fn authenticate(
         .ok_or(AuthError::Unauthorized)?;
     let token = header.trim();
     if token.is_empty() {
+        record_auth_event(pool, None, false, Some("密钥无效")).await;
         return Err(AuthError::Unauthorized);
     }
 
@@ -44,20 +61,25 @@ pub(crate) async fn authenticate(
     .map_err(|_| AuthError::Unauthorized)?;
 
     let Some((id, name, status, expires_at, quota_limit, used_tokens)) = row else {
+        record_auth_event(pool, None, false, Some("密钥无效")).await;
         return Err(AuthError::Unauthorized);
     };
 
     if status != "active" {
+        record_auth_event(pool, Some(&id), false, Some("密钥已禁用")).await;
         return Err(AuthError::Forbidden("密钥已禁用".into()));
     }
     if let Some(exp) = expires_at {
         if exp.as_str() < now_iso().as_str() {
+            record_auth_event(pool, Some(&id), false, Some("密钥已过期")).await;
             return Err(AuthError::Forbidden("密钥已过期".into()));
         }
     }
     if quota_limit >= 0 && used_tokens >= quota_limit {
+        record_auth_event(pool, Some(&id), false, Some("配额用尽")).await;
         return Err(AuthError::QuotaExceeded);
     }
+    record_auth_event(pool, Some(&id), true, None).await;
     Ok(AuthKey { id, name })
 }
 

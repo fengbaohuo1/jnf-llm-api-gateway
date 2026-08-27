@@ -105,5 +105,45 @@ pub struct SecurityLog {
     pub category: String,
     pub risk: String,
     pub snippet_masked: String,
+    /// 处置动作：detected（仅记录）/ masked（已脱敏）/ blocked（已拦截）
+    pub action: String,
+    pub created_at: String,
+}
+
+/// 安全规则（DB 可配置，扫描引擎启动/定时重载）
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct SecurityRule {
+    pub id: String,
+    pub category: String,
+    pub risk: String,
+    pub pattern: String,
+    /// 匹配方式：regex（正则）/ substring（大小写不敏感子串，Aho-Corasick 多模式）
+    pub match_type: String,
+    pub enabled: bool,
+    pub action: String,
+    pub created_at: String,
+}
+
+/// 鉴权事件（成功/失败，含匿名失败）
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthEvent {
+    pub id: String,
+    pub key_id: Option<String>,
+    pub success: bool,
+    pub reason: Option<String>,
+    pub created_at: String,
+}
+
+/// 管理操作审计（渠道/密钥/设置/规则变更留痕）
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminAuditLog {
+    pub id: String,
+    pub action: String,
+    pub target_type: String,
+    pub target_id: Option<String>,
+    pub detail: Option<String>,
     pub created_at: String,
 }
