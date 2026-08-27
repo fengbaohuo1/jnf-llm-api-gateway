@@ -94,6 +94,11 @@ export const api = {
   createKey: (input: { name: string; quotaLimit: number; expiresAt: string | null }) =>
     invoke<RawCreatedKey>("create_key", { ...input }),
 
+  updateKey: (input: { id: string; name: string; quotaLimit: number; expiresAt: string | null }) =>
+    invoke("update_key", { ...input }),
+
+  rotateKey: (id: string) => invoke<RawCreatedKey>("rotate_key", { id }),
+
   deleteKey: (id: string) => invoke("delete_key", { id }),
   toggleKeyStatus: (id: string) => invoke("toggle_key_status", { id }),
 

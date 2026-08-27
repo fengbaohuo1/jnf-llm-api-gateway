@@ -50,10 +50,9 @@ pub fn new_id(prefix: &str) -> String {
     format!("{prefix}_{}", &s[..12])
 }
 
-/// 生成网关接入密钥：sk-llmapi- + 20 位小写字母数字
+/// 生成网关接入密钥：sk-llmapi- + 32 位 hex（UUID v4 全量，128 bit 熵）
 pub fn gen_key_secret() -> String {
-    let s = Uuid::new_v4().simple().to_string();
-    format!("sk-llmapi-{}", &s[..20])
+    format!("sk-llmapi-{}", Uuid::new_v4().simple())
 }
 
 /// 展示用脱敏（保留首尾 4 字符）

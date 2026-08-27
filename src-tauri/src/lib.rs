@@ -54,6 +54,8 @@ pub fn run() {
             // keys
             commands::keys::list_keys,
             commands::keys::create_key,
+            commands::keys::update_key,
+            commands::keys::rotate_key,
             commands::keys::delete_key,
             commands::keys::toggle_key_status,
             // requests

@@ -25,7 +25,7 @@
 - **安全**：`security.mode` replace（脱敏后照常，默认）/ block（high 风险拦截）；请求侧 + 响应侧 findings 合并写 security_logs
 - **记账**：`commands::requests::log_request` 统一（proxy 与命令共用）；**缓存/思考感知计费**——`extract_usage` 解析明细（缓存：DeepSeek `prompt_cache_hit_tokens` / OpenAI `prompt_tokens_details.cached_tokens`；思考：`completion_tokens_details.reasoning_tokens`），成本 = 未命中输入与普通输出 × 正常单价 + 命中 × `cache_price_per_1k_tokens` + 思考 × `reasoning_price_per_1k_tokens`（0 = 回落正常价）；requests 表记 `cache_hit_tokens`/`reasoning_tokens`，daily_stats 按日累加三部分明细；成功扣配额计费，失败尝试也记日志（status=0）
 - **界面单位**：价格以"元/M tokens"输入展示（`perM`/`per1k` 换算），存储仍按每 1k；token 计数一律精确到个位（不缩写 k/M）；成本显示 ¥（后端即为元）
-- **密钥**：`sk-llmapi-` + 20 位；keys 表只存 SHA-256 hash + key_prefix（明文仅创建时返回一次）；渠道 `api_key_encrypted` 为明文占位，**未做真实加密**
+- **密钥**：`sk-llmapi-` + 32 位 hex（128 bit 熵）；keys 表只存 SHA-256 hash + key_prefix（明文仅创建/轮换时返回一次）；支持编辑（名称/配额/过期）与轮换（旧钥立即失效、用量保留）；渠道 `api_key_encrypted` 为明文占位，**未做真实加密**
 
 ## 约定与踩坑
 - Tauri 命令参数自动 camelCase→snake_case；错误统一 OpenAI 格式 `{"error":{message,type,code}}`
@@ -41,4 +41,5 @@
 - ✅ 缓存/思考感知计费：迁移 0004/0005（缓存单价 + 思考单价 + requests 明细列），日志页展示命中与思考 token
 - ✅ 用量拆分与界面紧凑化：迁移 0006（daily_stats 明细列），用量页三合一柱状图（命中/未命中/输出）精确计数；价格改元/M；现代细滚动条
 - ✅ UI 打磨：窗口默认 1280×800（min 1024×700）；渠道表单"负载均衡/价格"改手风琴折叠；用量页去掉易换行的拆分文字，柱状图悬停浮窗显示当日各类 token（柱子用 `h-40` 定高 + 绝对定位百分比防贴底）；界面术语统一"输出"（reasoning 不再叫"思考"）
+- ✅ 密钥强化：`sk-llmapi-` + 32 位 hex（128 bit 熵，UUID v4 全量）；`update_key`（改名称/配额/过期）+ `rotate_key`（作废旧钥换新，用量保留，明文仅一次返回）；Keys 页编辑/轮换按钮与弹窗
 - ⏳ 候选：Claude/Gemini 适配器、渠道密钥真实加密、安全规则可配置化、日志页安全事件展示、前端代理状态页

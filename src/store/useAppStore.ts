@@ -48,6 +48,8 @@ interface AppState {
     id: string;
     key: string;
   }>;
+  updateKey: (input: { id: string; name: string; quotaLimit: number; expiresAt: string | null }) => Promise<void>;
+  rotateKey: (id: string) => Promise<string>;
   removeKey: (id: string) => Promise<void>;
   toggleKeyStatus: (id: string) => Promise<void>;
 }
@@ -136,6 +138,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     const created = await safe(() => api.createKey(input));
     await get().refreshKeys();
     return { id: created.id, key: created.key };
+  },
+
+  updateKey: async (input) => {
+    await safe(() => api.updateKey(input));
+    await get().refreshKeys();
+  },
+
+  rotateKey: async (id) => {
+    const created = await safe(() => api.rotateKey(id));
+    await get().refreshKeys();
+    return created.key;
   },
 
   removeKey: async (id) => {
