@@ -2,18 +2,25 @@
 //! - 首次启动：把 settings 表导出生成配置文件（带全部现有键值，可手改）
 //! - 之后启动：配置文件存在则导入并覆盖 DB（改文件重启生效，权威语义）
 //! - UI 修改设置（set_setting）：写 DB 后同步全量导出回配置文件（双写）
-//! 文件位置：应用配置目录（Windows: %APPDATA%\<identifier>\settings.json）
+//! 文件位置：用户主目录/.llm-api-gateway/settings.json（Windows: C:\Users\<user>\.llm-api-gateway\）
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use sqlx::SqlitePool;
+use tauri::Manager;
 
 /// 配置文件名
 pub const SETTINGS_FILE: &str = "settings.json";
 
+/// 数据目录：用户主目录/.llm-api-gateway（配置文件与数据库都放这里）
+pub fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    Ok(home.join(".llm-api-gateway"))
+}
+
 /// 配置文件完整路径
-pub fn settings_path(config_dir: &Path) -> std::path::PathBuf {
+pub fn settings_path(config_dir: &Path) -> PathBuf {
     config_dir.join(SETTINGS_FILE)
 }
 

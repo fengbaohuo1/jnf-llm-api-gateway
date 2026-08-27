@@ -40,7 +40,7 @@ pub async fn set_setting(
     }
 
     // 双写：设置修改同步写回配置文件（settings.json）
-    if let Ok(dir) = app.path().app_config_dir() {
+    if let Ok(dir) = config::data_dir(&app) {
         config::dump_settings_file(pool(&state), &dir).await;
     }
 
@@ -61,7 +61,7 @@ pub async fn get_setting(state: State<'_, DbState>, key: String) -> Result<Optio
 /// 配置文件信息（路径 + 是否存在），设置页展示用
 #[tauri::command]
 pub async fn settings_file_info(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
-    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let dir = config::data_dir(&app)?;
     let path = config::settings_path(&dir);
     Ok(serde_json::json!({
         "path": path.to_string_lossy().to_string(),
@@ -75,7 +75,7 @@ pub async fn reload_settings_file(
     app: tauri::AppHandle,
     state: State<'_, DbState>,
 ) -> Result<usize, String> {
-    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let dir = config::data_dir(&app)?;
     let n = config::import_settings_file(pool(&state), &dir).await?;
     // 刷新内存标志位
     let st = app.state::<AppState>();

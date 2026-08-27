@@ -19,7 +19,7 @@ impl Default for ProxySettings {
     fn default() -> Self {
         Self {
             server_enabled: true,
-            failover_enabled: true,
+            failover_enabled: false,
             failover_max_attempts: 3,
             security_enabled: true,
             security_mode: "replace".to_string(),

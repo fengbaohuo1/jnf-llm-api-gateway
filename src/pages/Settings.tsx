@@ -198,11 +198,15 @@ function SystemTab() {
     setTimeout(() => setSaved(false), 1500);
   };
 
-  const openConfigDir = async () => {
-    if (!fileInfo) return;
-    // 取文件所在目录（Windows 路径反斜杠分隔）
-    const dir = fileInfo.path.replace(/\\[^\\]*$/, "");
-    await openPath(dir);
+  const openConfigFile = async () => {
+    if (!fileInfo?.exists) return;
+    try {
+      // 直接用系统默认程序打开 settings.json（记事本 / 编辑器）
+      await openPath(fileInfo.path);
+    } catch (e) {
+      setReloadMsg(`打开失败：${e}`);
+      setTimeout(() => setReloadMsg(null), 3000);
+    }
   };
 
   const reloadFromFile = async () => {
@@ -243,7 +247,7 @@ function SystemTab() {
         </p>
         <code className="block rounded-md bg-inset px-3 py-2 text-xs text-sub">{fileInfo?.path ?? "加载中…"}</code>
         <div className="mt-3 flex items-center gap-3">
-          <Button variant="secondary" onClick={openConfigDir} disabled={!fileInfo}>打开配置目录</Button>
+          <Button variant="secondary" onClick={openConfigFile} disabled={!fileInfo?.exists}>打开配置文件</Button>
           <Button variant="secondary" onClick={reloadFromFile} disabled={!fileInfo?.exists}>从文件重新加载</Button>
           {reloadMsg && <span className="text-xs text-green-600">{reloadMsg}</span>}
         </div>
@@ -337,7 +341,7 @@ function RetryTab() {
 }
 
 function FailoverTab() {
-  const enabled = useSetting("failover.enabled", "true");
+  const enabled = useSetting("failover.enabled", "false");
   const maxAttempts = useSetting("failover.max_attempts", "3");
   const [saved, setSaved] = useState(false);
   const saveAll = async () => {

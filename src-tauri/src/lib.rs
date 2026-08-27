@@ -44,21 +44,29 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .setup(|app| {
-            // 数据库放在应用数据目录，保证跨平台可写。
-            let dir = app.path().app_data_dir()?;
+            // 数据目录：用户主目录/.llm-api-gateway（常规点目录，配置与数据库同处）
+            let dir = config::data_dir(app.handle())?;
             std::fs::create_dir_all(&dir).ok();
+
+            // 一次性迁移：旧版数据在 %APPDATA%/<identifier>/，新位置无数据时自动复制
+            if let Ok(old_dir) = app.path().app_data_dir() {
+                if !dir.join("llm_gateway.db").exists() && old_dir.join("llm_gateway.db").exists() {
+                    let _ = std::fs::copy(old_dir.join("llm_gateway.db"), dir.join("llm_gateway.db"));
+                    if old_dir.join("settings.json").exists() {
+                        let _ = std::fs::copy(old_dir.join("settings.json"), dir.join("settings.json"));
+                    }
+                }
+            }
+
             let db_path = dir.join("llm_gateway.db");
             let pool = tauri::async_runtime::block_on(db::init(&db_path))?;
 
             // 配置文件（settings.json）：存在则导入覆盖 DB（改文件重启生效），
             // 不存在则把当前设置导出生成模板。
-            let config_dir = app.path().app_config_dir()?;
-            std::fs::create_dir_all(&config_dir).ok();
-            let imported = tauri::async_runtime::block_on(config::import_settings_file(
-                &pool, &config_dir,
-            ))?;
+            let imported =
+                tauri::async_runtime::block_on(config::import_settings_file(&pool, &dir))?;
             if imported == 0 {
-                tauri::async_runtime::block_on(config::dump_settings_file(&pool, &config_dir));
+                tauri::async_runtime::block_on(config::dump_settings_file(&pool, &dir));
             }
             app.manage(DbState(pool.clone()));
 

@@ -90,3 +90,47 @@
 [data-theme="dark"] * {
   scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
 }
+
+/* ---- 原生控件主题化 ---- */
+/* color-scheme：让浏览器原生控件（数字加减按钮/日期选择/下拉弹层/滚动条等）
+   跟随 data-theme 使用深色渲染，而非系统外观 */
+:root {
+  color-scheme: light;
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+/* 复选框/单选等原生控件用主题强调色 */
+input[type="checkbox"],
+input[type="radio"],
+input[type="range"] {
+  accent-color: var(--color-accent);
+}
+
+/* 下拉框：隐藏浏览器原生箭头，改用主题化自定义箭头（亮/暗两套） */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.55rem center;
+  background-size: 1rem;
+  padding-right: 2.1rem;
+  color: var(--color-main);
+  background-color: var(--color-card);
+}
+[data-theme="dark"] select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+select option {
+  background-color: var(--color-card);
+  color: var(--color-main);
+}
+
+/* 输入控件文字颜色兜底（未显式配色的 select/input 也跟随主题） */
+input,
+select,
+textarea {
+  color: var(--color-main);
+}
