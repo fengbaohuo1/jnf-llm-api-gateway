@@ -21,7 +21,7 @@ const navItems = [
 
 export function Sidebar() {
   return (
-    <aside className="flex w-52 flex-shrink-0 flex-col border-r border-gray-200 bg-white">
+    <aside className="flex w-52 flex-shrink-0 flex-col border-r border-edge bg-card">
       <div className="flex items-center gap-2 px-4 py-4">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2">
@@ -30,8 +30,8 @@ export function Sidebar() {
           </svg>
         </div>
         <div>
-          <p className="text-sm font-bold text-gray-900">LLM 网关</p>
-          <p className="text-xs text-gray-400">API Gateway</p>
+          <p className="text-sm font-bold text-main">LLM 网关</p>
+          <p className="text-xs text-faint">API Gateway</p>
         </div>
       </div>
 
@@ -46,8 +46,8 @@ export function Sidebar() {
               className={({ isActive }) =>
                 `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                   isActive
-                    ? "bg-indigo-50 text-indigo-700"
-                    : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                    ? "bg-accent-soft text-accent"
+                    : "text-muted hover:bg-hover hover:text-main"
                 }`
               }
             >
@@ -58,8 +58,8 @@ export function Sidebar() {
         })}
       </nav>
 
-      <div className="border-t border-gray-200 px-4 py-3">
-        <p className="text-xs text-gray-400">v0.1.0 本地开发版</p>
+      <div className="border-t border-edge px-4 py-3">
+        <p className="text-xs text-faint">v1.0.0</p>
       </div>
     </aside>
   );

@@ -6,15 +6,15 @@ import { PageHeader, Card } from "../components/ui";
 import { Button, Modal } from "../components/Modal";
 
 const inputCls =
-  "w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
+  "w-full rounded-md border border-strong px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
 
 function statusBadge(status: ApiKey["status"]) {
   return status === "active" ? (
-    <span className="inline-flex items-center gap-1.5 rounded-md bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 ring-1 ring-green-200">
+    <span className="inline-flex items-center gap-1.5 rounded-md bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 ring-1 ring-green-200 dark:bg-green-950 dark:text-green-300 dark:ring-green-900">
       <span className="h-1.5 w-1.5 rounded-full bg-green-500" /> 启用
     </span>
   ) : (
-    <span className="inline-flex items-center gap-1.5 rounded-md bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500 ring-1 ring-gray-200">
+    <span className="inline-flex items-center gap-1.5 rounded-md bg-inset px-2 py-0.5 text-xs font-medium text-muted ring-1 ring-edge">
       <span className="h-1.5 w-1.5 rounded-full bg-gray-400" /> 停用
     </span>
   );
@@ -24,11 +24,11 @@ function statusBadge(status: ApiKey["status"]) {
 function RevealedSecret({ secret, note, onClose }: { secret: string; note?: string; onClose: () => void }) {
   return (
     <div className="space-y-4">
-      {note && <p className="text-sm text-gray-600">{note}</p>}
-      <div className="flex items-center gap-2 rounded-md border border-dashed border-indigo-300 bg-indigo-50 px-3 py-2.5">
-        <code className="flex-1 break-all text-sm font-mono text-indigo-700">{secret}</code>
+      {note && <p className="text-sm text-muted">{note}</p>}
+      <div className="flex items-center gap-2 rounded-md border border-dashed border-indigo-300 bg-accent-soft px-3 py-2.5">
+        <code className="flex-1 break-all text-sm font-mono text-accent">{secret}</code>
         <button
-          className="rounded-md p-1.5 text-indigo-600 hover:bg-indigo-100"
+          className="rounded-md p-1.5 text-accent hover:bg-indigo-100"
           onClick={() => navigator.clipboard?.writeText(secret)}
           title="复制"
         >
@@ -80,11 +80,11 @@ function CreateKeyModal({
           }}
         >
           <label className="block">
-            <span className="mb-1 block text-sm font-medium text-gray-700">密钥名称</span>
+            <span className="mb-1 block text-sm font-medium text-sub">密钥名称</span>
             <input required value={name} onChange={(e) => setName(e.target.value)} className={inputCls} placeholder="如 生产环境" />
           </label>
           <label className="block">
-            <span className="mb-1 block text-sm font-medium text-gray-700">配额限制（Token，-1 表示不限）</span>
+            <span className="mb-1 block text-sm font-medium text-sub">配额限制（Token，-1 表示不限）</span>
             <input
               value={quota}
               onChange={(e) => setQuota(e.target.value)}
@@ -94,7 +94,7 @@ function CreateKeyModal({
             />
           </label>
           <label className="block">
-            <span className="mb-1 block text-sm font-medium text-gray-700">过期时间（可选）</span>
+            <span className="mb-1 block text-sm font-medium text-sub">过期时间（可选）</span>
             <input value={expires} onChange={(e) => setExpires(e.target.value)} className={inputCls} type="date" />
           </label>
           <div className="flex justify-end gap-2 pt-2">
@@ -158,11 +158,11 @@ function EditKeyModal({
         }}
       >
         <label className="block">
-          <span className="mb-1 block text-sm font-medium text-gray-700">密钥名称</span>
+          <span className="mb-1 block text-sm font-medium text-sub">密钥名称</span>
           <input required value={name} onChange={(e) => setName(e.target.value)} className={inputCls} />
         </label>
         <label className="block">
-          <span className="mb-1 block text-sm font-medium text-gray-700">配额限制（Token，-1 表示不限）</span>
+          <span className="mb-1 block text-sm font-medium text-sub">配额限制（Token，-1 表示不限）</span>
           <input
             value={quota}
             onChange={(e) => setQuota(e.target.value)}
@@ -172,7 +172,7 @@ function EditKeyModal({
           />
         </label>
         <label className="block">
-          <span className="mb-1 block text-sm font-medium text-gray-700">过期时间（可选）</span>
+          <span className="mb-1 block text-sm font-medium text-sub">过期时间（可选）</span>
           <input value={expires} onChange={(e) => setExpires(e.target.value)} className={inputCls} type="date" />
         </label>
         {error && <p className="text-sm text-red-600">{error}</p>}
@@ -224,8 +224,8 @@ function RotateKeyModal({
         />
       ) : (
         <div className="space-y-4">
-          <p className="text-sm text-gray-600">
-            确定要轮换密钥 <span className="font-semibold text-gray-900">{target?.name}</span> 吗？
+          <p className="text-sm text-muted">
+            确定要轮换密钥 <span className="font-semibold text-main">{target?.name}</span> 吗？
             旧密钥将立即失效，用量累计与配额设置保持不变。
           </p>
           {error && <p className="text-sm text-red-600">{error}</p>}
@@ -287,7 +287,7 @@ export function Keys() {
 
       <Card className="p-0 overflow-hidden">
         <table className="w-full text-left text-sm">
-          <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500">
+          <thead className="border-b border-edge bg-inset text-xs text-muted">
             <tr>
               <th className="px-3 py-2 font-medium">名称</th>
               <th className="px-3 py-2 font-medium">密钥</th>
@@ -298,53 +298,53 @@ export function Keys() {
               <th className="px-3 py-2 text-right font-medium">操作</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
+          <tbody className="divide-y divide-edge">
             {keys.map((k) => {
               const used = quotaUsed(k);
               return (
-                <tr key={k.id} className="hover:bg-gray-50">
-                  <td className="px-3 py-2 font-medium text-gray-900">{k.name}</td>
+                <tr key={k.id} className="hover:bg-hover">
+                  <td className="px-3 py-2 font-medium text-main">{k.name}</td>
                   <td className="px-3 py-2">
-                    <code className="font-mono text-xs text-gray-600">{k.key.slice(0, 13)}••••••••</code>
+                    <code className="font-mono text-xs text-muted">{k.key.slice(0, 13)}••••••••</code>
                   </td>
                   <td className="px-3 py-2">
                     <button onClick={() => toggleKeyStatus(k.id)} title="点击切换状态">
                       {statusBadge(k.status)}
                     </button>
                   </td>
-                  <td className="px-3 py-2 text-gray-600">{k.quotaLimit === -1 ? "不限" : k.quotaLimit.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-muted">{k.quotaLimit === -1 ? "不限" : k.quotaLimit.toLocaleString()}</td>
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-2">
-                      <div className="h-1.5 w-24 overflow-hidden rounded-full bg-gray-100">
+                      <div className="h-1.5 w-24 overflow-hidden rounded-full bg-inset">
                         <div
                           className={`h-full rounded-full ${used !== null && used >= 90 ? "bg-red-500" : "bg-indigo-500"}`}
                           style={{ width: `${used ?? 0}%` }}
                         />
                       </div>
-                      <span className="text-xs text-gray-500">
+                      <span className="text-xs text-muted">
                         {used !== null ? `${used}%` : k.usedTokens.toLocaleString()}
                       </span>
                     </div>
                   </td>
-                  <td className="px-3 py-2 text-gray-500">{k.expiresAt ?? "—"}</td>
+                  <td className="px-3 py-2 text-muted">{k.expiresAt ?? "—"}</td>
                   <td className="px-3 py-2">
                     <div className="flex justify-end gap-1">
                       <button
-                        className="rounded-md p-1.5 text-gray-400 hover:bg-indigo-50 hover:text-indigo-600"
+                        className="rounded-md p-1.5 text-faint hover:bg-accent-soft hover:text-accent"
                         onClick={() => setEditTarget(k)}
                         title="编辑"
                       >
                         <Pencil size={15} />
                       </button>
                       <button
-                        className="rounded-md p-1.5 text-gray-400 hover:bg-amber-50 hover:text-amber-600"
+                        className="rounded-md p-1.5 text-faint hover:bg-amber-50 hover:text-amber-600 dark:hover:bg-amber-950 dark:hover:text-amber-400"
                         onClick={() => setRotateTarget(k)}
                         title="轮换（作废旧密钥）"
                       >
                         <RotateCw size={15} />
                       </button>
                       <button
-                        className="rounded-md p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600"
+                        className="rounded-md p-1.5 text-faint hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950 dark:hover:text-red-400"
                         onClick={() => setConfirmDelete(k)}
                         title="删除"
                       >
@@ -357,7 +357,7 @@ export function Keys() {
             })}
             {!loadingKeys && keys.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-400">
+                <td colSpan={7} className="px-4 py-8 text-center text-sm text-faint">
                   暂无密钥，点击右上角创建
                 </td>
               </tr>
@@ -394,8 +394,8 @@ export function Keys() {
       />
 
       <Modal open={!!confirmDelete} title="删除密钥" onClose={() => setConfirmDelete(null)}>
-        <p className="text-sm text-gray-600">
-          确定要删除密钥 <span className="font-semibold text-gray-900">{confirmDelete?.name}</span> 吗？使用该密钥的请求将立即被拒绝。
+        <p className="text-sm text-muted">
+          确定要删除密钥 <span className="font-semibold text-main">{confirmDelete?.name}</span> 吗？使用该密钥的请求将立即被拒绝。
         </p>
         <div className="mt-5 flex justify-end gap-2">
           <Button variant="secondary" onClick={() => setConfirmDelete(null)}>

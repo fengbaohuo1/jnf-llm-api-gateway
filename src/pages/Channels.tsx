@@ -42,14 +42,14 @@ const perM = (per1k: number) => (per1k > 0 ? parseFloat((per1k * 1000).toFixed(6
 const per1k = (perM: number) => Math.round((perM / 1000) * 1e9) / 1e9;
 
 const inputCls =
-  "w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
+  "w-full rounded-md border border-strong px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-sm font-medium text-gray-700">{label}</span>
+      <span className="mb-1 block text-sm font-medium text-sub">{label}</span>
       {children}
-      {hint && <span className="mt-0.5 block text-xs text-gray-400">{hint}</span>}
+      {hint && <span className="mt-0.5 block text-xs text-faint">{hint}</span>}
     </label>
   );
 }
@@ -58,16 +58,16 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 function Accordion({ title, children }: { title: string; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="overflow-hidden rounded-lg border border-gray-200">
+    <div className="overflow-hidden rounded-lg border border-edge">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center justify-between px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+        className="flex w-full items-center justify-between px-3 py-2 text-sm font-medium text-sub transition-colors hover:bg-hover"
       >
         {title}
-        <ChevronDown size={16} className={`shrink-0 text-gray-400 transition-transform ${open ? "rotate-180" : ""}`} />
+        <ChevronDown size={16} className={`shrink-0 text-faint transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
-      {open && <div className="border-t border-gray-200 p-3">{children}</div>}
+      {open && <div className="border-t border-edge p-3">{children}</div>}
     </div>
   );
 }
@@ -348,7 +348,7 @@ export function Channels() {
       />
 
       {error && (
-        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
           {error}
         </div>
       )}
@@ -356,7 +356,7 @@ export function Channels() {
       <Card className="mb-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
           <div className="relative sm:col-span-2">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
             <input
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
@@ -379,14 +379,14 @@ export function Channels() {
             <option value="error">异常</option>
           </select>
         </div>
-        <p className="mt-3 text-xs text-gray-400">
+        <p className="mt-3 text-xs text-faint">
           共 {filtered.length} 个渠道{channels.length !== filtered.length && `（已筛选，全部 ${channels.length}）`}
         </p>
       </Card>
 
       <Card className="p-0 overflow-hidden">
         <table className="w-full text-left text-sm">
-          <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500">
+          <thead className="border-b border-edge bg-inset text-xs text-muted">
             <tr>
               <th className="px-3 py-2 font-medium">名称</th>
               <th className="px-3 py-2 font-medium">类型</th>
@@ -398,28 +398,28 @@ export function Channels() {
               <th className="px-3 py-2 text-right font-medium">操作</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
+          <tbody className="divide-y divide-edge">
             {filtered.map((c) => (
-              <tr key={c.id} className="hover:bg-gray-50">
+              <tr key={c.id} className="hover:bg-hover">
                 <td className="px-3 py-2">
-                  <p className="font-medium text-gray-900">{c.name}</p>
-                  <p className="max-w-56 truncate text-xs text-gray-400" title={c.baseUrl}>
+                  <p className="font-medium text-main">{c.name}</p>
+                  <p className="max-w-56 truncate text-xs text-faint" title={c.baseUrl}>
                     {c.baseUrl}
                   </p>
                 </td>
                 <td className="px-3 py-2">
                   <ChannelTypeBadge type={c.type} />
                 </td>
-                <td className="px-3 py-2 text-gray-600">{c.model || "—"}</td>
-                <td className="px-3 py-2 text-gray-600">
-                  <span className="font-medium text-gray-700">{c.priority}</span>
-                  <span className="text-xs text-gray-400"> / {c.weight}</span>
+                <td className="px-3 py-2 text-muted">{c.model || "—"}</td>
+                <td className="px-3 py-2 text-muted">
+                  <span className="font-medium text-sub">{c.priority}</span>
+                  <span className="text-xs text-faint"> / {c.weight}</span>
                 </td>
-                <td className="px-3 py-2 text-gray-600">
+                <td className="px-3 py-2 text-muted">
                   {c.pricePer1kTokens > 0 ? (
                     <span>
                       ¥{perM(c.pricePer1kTokens)}
-                      <span className="text-xs text-gray-400">/M</span>
+                      <span className="text-xs text-faint">/M</span>
                       {c.cachePricePer1kTokens > 0 && (
                         <span className="block text-xs text-emerald-500">缓存 ¥{perM(c.cachePricePer1kTokens)}</span>
                       )}
@@ -428,7 +428,7 @@ export function Channels() {
                       )}
                     </span>
                   ) : (
-                    <span className="text-gray-300">—</span>
+                    <span className="text-strong">—</span>
                   )}
                 </td>
                 <td className="px-3 py-2">
@@ -436,9 +436,9 @@ export function Channels() {
                     <StatusBadge status={c.status} />
                   </button>
                 </td>
-                <td className="px-3 py-2 text-gray-600">
+                <td className="px-3 py-2 text-muted">
                   {c.latencyMs ? `${c.latencyMs} ms` : "—"}
-                  {testMsg[c.id] && <span className="block text-xs text-indigo-600">{testMsg[c.id]}</span>}
+                  {testMsg[c.id] && <span className="block text-xs text-accent">{testMsg[c.id]}</span>}
                 </td>
                 <td className="px-3 py-2">
                   <div className="flex justify-end gap-1">
@@ -457,7 +457,7 @@ export function Channels() {
             ))}
             {!loadingChannels && filtered.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-400">
+                <td colSpan={8} className="px-4 py-10 text-center text-sm text-faint">
                   {channels.length === 0 ? "暂无渠道，点击右上角添加" : "没有符合筛选条件的渠道"}
                 </td>
               </tr>
@@ -487,8 +487,8 @@ export function Channels() {
       />
 
       <Modal open={!!confirmDelete} title="删除渠道" onClose={() => setConfirmDelete(null)}>
-        <p className="text-sm text-gray-600">
-          确定要删除渠道 <span className="font-semibold text-gray-900">{confirmDelete?.name}</span> 吗？此操作不可撤销。
+        <p className="text-sm text-muted">
+          确定要删除渠道 <span className="font-semibold text-main">{confirmDelete?.name}</span> 吗？此操作不可撤销。
         </p>
         <div className="mt-5 flex justify-end gap-2">
           <Button variant="secondary" onClick={() => setConfirmDelete(null)}>
@@ -509,7 +509,7 @@ function IconBtn({ children, onClick, title, danger }: { children: React.ReactNo
       title={title}
       onClick={onClick}
       className={`rounded-md p-1.5 transition-colors ${
-        danger ? "text-gray-400 hover:bg-red-50 hover:text-red-600" : "text-gray-400 hover:bg-indigo-50 hover:text-indigo-600"
+        danger ? "text-faint hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950 dark:hover:text-red-400" : "text-faint hover:bg-accent-soft hover:text-accent"
       }`}
     >
       {children}

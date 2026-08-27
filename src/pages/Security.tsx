@@ -7,28 +7,28 @@ import type { AuthEvent, AdminAudit, SecurityLog, SecurityRule } from "../types"
 
 const fmt = (n: number) => n.toLocaleString("en-US");
 const inputCls =
-  "w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
+  "w-full rounded-md border border-strong px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
 
 // ---------------- 徽章 ----------------
 
 const riskStyles: Record<string, string> = {
-  low: "bg-green-50 text-green-700 ring-green-200",
-  medium: "bg-amber-50 text-amber-700 ring-amber-200",
-  high: "bg-red-50 text-red-700 ring-red-200",
+  low: "bg-green-50 text-green-700 ring-green-200 dark:bg-green-950 dark:text-green-300 dark:ring-green-900",
+  medium: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:ring-amber-900",
+  high: "bg-red-50 text-red-700 ring-red-200 dark:bg-red-950 dark:text-red-300 dark:ring-red-900",
 };
 function RiskBadge({ risk }: { risk: string }) {
   const label = { low: "低", medium: "中", high: "高" }[risk] ?? risk;
   return (
-    <span className={`inline-flex rounded-md px-2 py-0.5 text-xs font-medium ring-1 ${riskStyles[risk] ?? "bg-gray-50 text-gray-600 ring-gray-200"}`}>
+    <span className={`inline-flex rounded-md px-2 py-0.5 text-xs font-medium ring-1 ${riskStyles[risk] ?? "bg-inset text-muted ring-edge"}`}>
       {label}
     </span>
   );
 }
 
 const actionStyles: Record<string, string> = {
-  detected: "bg-gray-50 text-gray-600 ring-gray-200",
-  masked: "bg-sky-50 text-sky-700 ring-sky-200",
-  blocked: "bg-red-50 text-red-700 ring-red-200",
+  detected: "bg-inset text-muted ring-edge",
+  masked: "bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-950 dark:text-sky-300 dark:ring-sky-900",
+  blocked: "bg-red-50 text-red-700 ring-red-200 dark:bg-red-950 dark:text-red-300 dark:ring-red-900",
 };
 const actionLabels: Record<string, string> = {
   detected: "仅记录",
@@ -40,7 +40,7 @@ const actionLabels: Record<string, string> = {
 };
 function ActionBadge({ action }: { action: string }) {
   return (
-    <span className={`inline-flex rounded-md px-2 py-0.5 text-xs font-medium ring-1 ${actionStyles[action] ?? "bg-gray-50 text-gray-600 ring-gray-200"}`}>
+    <span className={`inline-flex rounded-md px-2 py-0.5 text-xs font-medium ring-1 ${actionStyles[action] ?? "bg-inset text-muted ring-edge"}`}>
       {actionLabels[action] ?? action}
     </span>
   );
@@ -72,25 +72,25 @@ function EventsTab() {
     <div>
       <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-4">
         <Card>
-          <p className="text-xs text-gray-500">近 7 天事件</p>
-          <p className="mt-1 text-2xl font-bold text-gray-900">{fmt(total)}</p>
+          <p className="text-xs text-muted">近 7 天事件</p>
+          <p className="mt-1 text-2xl font-bold text-main">{fmt(total)}</p>
         </Card>
         <Card>
-          <p className="text-xs text-gray-500">高风险命中</p>
+          <p className="text-xs text-muted">高风险命中</p>
           <p className="mt-1 text-2xl font-bold text-red-600">{fmt(byRisk.get("high") ?? 0)}</p>
         </Card>
         <Card>
-          <p className="text-xs text-gray-500">已拦截</p>
+          <p className="text-xs text-muted">已拦截</p>
           <p className="mt-1 text-2xl font-bold text-red-600">{fmt(byAction.get("blocked") ?? 0)}</p>
         </Card>
         <Card>
-          <p className="text-xs text-gray-500">已脱敏</p>
+          <p className="text-xs text-muted">已脱敏</p>
           <p className="mt-1 text-2xl font-bold text-sky-600">{fmt(byAction.get("masked") ?? 0)}</p>
         </Card>
       </div>
 
       <Card className="mb-4">
-        <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700">
+        <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-sub">
           <AlertTriangle size={15} /> 近 7 天安全事件趋势
         </h3>
         <div className="flex h-32 items-end gap-2">
@@ -103,10 +103,10 @@ function EventsTab() {
                   title={`${date}: ${c} 条`}
                 />
               </div>
-              <span className="mt-1 text-[10px] text-gray-400">{date.slice(5)}</span>
+              <span className="mt-1 text-[10px] text-faint">{date.slice(5)}</span>
             </div>
           ))}
-          {(stats?.daily ?? []).length === 0 && <p className="w-full py-8 text-center text-sm text-gray-400">暂无数据</p>}
+          {(stats?.daily ?? []).length === 0 && <p className="w-full py-8 text-center text-sm text-faint">暂无数据</p>}
         </div>
       </Card>
 
@@ -123,13 +123,13 @@ function EventsTab() {
             <option value="request">请求侧</option>
             <option value="response">响应侧</option>
           </select>
-          <p className="self-center text-xs text-gray-400">共 {logs.length} 条（按时间倒序，最多 500）</p>
+          <p className="self-center text-xs text-faint">共 {logs.length} 条（按时间倒序，最多 500）</p>
         </div>
       </Card>
 
       <Card className="p-0 overflow-hidden">
         <table className="w-full text-left text-sm">
-          <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500">
+          <thead className="border-b border-edge bg-inset text-xs text-muted">
             <tr>
               <th className="px-3 py-2 font-medium">时间</th>
               <th className="px-3 py-2 font-medium">阶段</th>
@@ -141,26 +141,26 @@ function EventsTab() {
               <th className="px-3 py-2 font-medium">请求ID</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
+          <tbody className="divide-y divide-edge">
             {logs.map((l) => (
-              <tr key={l.id} className="hover:bg-gray-50">
-                <td className="px-3 py-2 whitespace-nowrap text-gray-600">{l.createdAt.slice(5, 16)}</td>
-                <td className="px-3 py-2 text-gray-600">{l.stage === "request" ? "请求侧" : "响应侧"}</td>
+              <tr key={l.id} className="hover:bg-hover">
+                <td className="px-3 py-2 whitespace-nowrap text-muted">{l.createdAt.slice(5, 16)}</td>
+                <td className="px-3 py-2 text-muted">{l.stage === "request" ? "请求侧" : "响应侧"}</td>
                 <td className="px-3 py-2">
-                  <code className="font-mono text-xs text-gray-700">{l.ruleId}</code>
+                  <code className="font-mono text-xs text-sub">{l.ruleId}</code>
                 </td>
-                <td className="px-3 py-2 text-gray-600">{l.category}</td>
+                <td className="px-3 py-2 text-muted">{l.category}</td>
                 <td className="px-3 py-2"><RiskBadge risk={l.risk} /></td>
                 <td className="px-3 py-2"><ActionBadge action={l.action} /></td>
                 <td className="px-3 py-2">
-                  <code className="font-mono text-xs text-gray-500">{l.snippetMasked}</code>
+                  <code className="font-mono text-xs text-muted">{l.snippetMasked}</code>
                 </td>
-                <td className="px-3 py-2 font-mono text-xs text-gray-400">{l.requestId.slice(4, 16)}</td>
+                <td className="px-3 py-2 font-mono text-xs text-faint">{l.requestId.slice(4, 16)}</td>
               </tr>
             ))}
             {logs.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-400">
+                <td colSpan={8} className="px-4 py-8 text-center text-sm text-faint">
                   暂无安全事件
                 </td>
               </tr>
@@ -226,7 +226,7 @@ function RuleModal({
       >
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
-            <span className="mb-1 block text-sm font-medium text-gray-700">类别</span>
+            <span className="mb-1 block text-sm font-medium text-sub">类别</span>
             <select value={category} onChange={(e) => setCategory(e.target.value)} className={inputCls}>
               <option value="secret">密钥/凭据</option>
               <option value="pii">个人信息</option>
@@ -236,7 +236,7 @@ function RuleModal({
             </select>
           </label>
           <label className="block">
-            <span className="mb-1 block text-sm font-medium text-gray-700">匹配方式</span>
+            <span className="mb-1 block text-sm font-medium text-sub">匹配方式</span>
             <select value={matchType} onChange={(e) => setMatchType(e.target.value)} className={inputCls}>
               <option value="regex">正则表达式</option>
               <option value="substring">子串匹配（大小写不敏感）</option>
@@ -245,7 +245,7 @@ function RuleModal({
         </div>
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
-            <span className="mb-1 block text-sm font-medium text-gray-700">风险</span>
+            <span className="mb-1 block text-sm font-medium text-sub">风险</span>
             <select value={risk} onChange={(e) => setRisk(e.target.value)} className={inputCls}>
               <option value="low">低</option>
               <option value="medium">中</option>
@@ -253,7 +253,7 @@ function RuleModal({
             </select>
           </label>
           <label className="block">
-            <span className="mb-1 block text-sm font-medium text-gray-700">处置</span>
+            <span className="mb-1 block text-sm font-medium text-sub">处置</span>
             <select value={action} onChange={(e) => setAction(e.target.value)} className={inputCls}>
               <option value="record">仅记录</option>
               <option value="mask">脱敏</option>
@@ -262,7 +262,7 @@ function RuleModal({
           </label>
         </div>
         <label className="block">
-          <span className="mb-1 block text-sm font-medium text-gray-700">
+          <span className="mb-1 block text-sm font-medium text-sub">
             {matchType === "regex" ? "正则表达式" : "匹配子串"}
           </span>
           <textarea
@@ -273,7 +273,7 @@ function RuleModal({
             rows={3}
             placeholder={matchType === "regex" ? "如 \\b1[3-9]\\d{9}\\b" : "如 忽略以上所有指令（精确出现即命中）"}
           />
-          <span className="mt-0.5 block text-xs text-gray-400">
+          <span className="mt-0.5 block text-xs text-faint">
             {matchType === "regex"
               ? "正则引擎（secret/pii/prompt_injection/encoding/command 按类别分流）"
               : "子串引擎（Aho-Corasick 多模式匹配，一次性线性扫描，适合固定短语/命令/密钥块头）"}
@@ -387,12 +387,12 @@ function RulesTab() {
   return (
     <div>
       {error && (
-        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">{error}</div>
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">{error}</div>
       )}
       <Card className="mb-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
           <div className="relative sm:col-span-2">
-            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
             <input
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
@@ -413,7 +413,7 @@ function RulesTab() {
           </select>
         </div>
         <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-          <p className="text-xs text-gray-400">
+          <p className="text-xs text-faint">
             共 {filtered.length} 条（全部 {rules.length} · 启用 {enabledCount}）· 启停 30 秒内自动生效
           </p>
           <Button
@@ -426,8 +426,8 @@ function RulesTab() {
           </Button>
         </div>
         {selected.size > 0 && (
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-indigo-50 px-3 py-2 ring-1 ring-indigo-100">
-            <span className="text-sm font-medium text-indigo-700">已选 {selected.size} 条规则</span>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-accent-soft px-3 py-2 ring-1 ring-indigo-100">
+            <span className="text-sm font-medium text-accent">已选 {selected.size} 条规则</span>
             <div className="flex gap-2">
               <Button onClick={() => batchSet(true)}>
                 <CheckCircle2 size={15} className="mr-1 inline" /> 批量启用
@@ -445,14 +445,14 @@ function RulesTab() {
 
       <Card className="p-0 overflow-hidden">
         <table className="w-full text-left text-sm">
-          <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500">
+          <thead className="border-b border-edge bg-inset text-xs text-muted">
             <tr>
               <th className="w-8 px-3 py-2">
                 <input
                   type="checkbox"
                   checked={allSelected}
                   onChange={toggleSelectAll}
-                  className="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                  className="h-3.5 w-3.5 rounded border-strong text-accent focus:ring-indigo-500"
                   title="全选当前列表"
                 />
               </th>
@@ -466,31 +466,31 @@ function RulesTab() {
               <th className="px-3 py-2 text-right font-medium">操作</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
+          <tbody className="divide-y divide-edge">
             {filtered.map((r) => (
               <tr
                 key={r.id}
-                className={`hover:bg-gray-50 ${r.enabled ? "" : "opacity-50"} ${selected.has(r.id) ? "bg-indigo-50/50" : ""}`}
+                className={`hover:bg-hover ${r.enabled ? "" : "opacity-50"} ${selected.has(r.id) ? "bg-accent-soft/50" : ""}`}
               >
                 <td className="px-3 py-2">
                   <input
                     type="checkbox"
                     checked={selected.has(r.id)}
                     onChange={() => toggleSelect(r.id)}
-                    className="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                    className="h-3.5 w-3.5 rounded border-strong text-accent focus:ring-indigo-500"
                   />
                 </td>
-                <td className="px-3 py-2"><code className="font-mono text-xs text-gray-700">{r.id}</code></td>
-                <td className="px-3 py-2 text-gray-600">{catLabels[r.category] ?? r.category}</td>
+                <td className="px-3 py-2"><code className="font-mono text-xs text-sub">{r.id}</code></td>
+                <td className="px-3 py-2 text-muted">{catLabels[r.category] ?? r.category}</td>
                 <td className="px-3 py-2">
-                  <span className={`rounded-md px-2 py-0.5 text-xs font-medium ring-1 ${r.matchType === "substring" ? "bg-violet-50 text-violet-700 ring-violet-200" : "bg-gray-50 text-gray-600 ring-gray-200"}`}>
+                  <span className={`rounded-md px-2 py-0.5 text-xs font-medium ring-1 ${r.matchType === "substring" ? "bg-violet-50 text-violet-700 ring-violet-200 dark:bg-violet-950 dark:text-violet-300 dark:ring-violet-900" : "bg-inset text-muted ring-edge"}`}>
                     {r.matchType === "substring" ? "子串" : "正则"}
                   </span>
                 </td>
                 <td className="px-3 py-2"><RiskBadge risk={r.risk} /></td>
                 <td className="px-3 py-2"><ActionBadge action={r.action} /></td>
                 <td className="px-3 py-2">
-                  <code className="block max-w-72 truncate font-mono text-xs text-gray-500" title={r.pattern}>
+                  <code className="block max-w-72 truncate font-mono text-xs text-muted" title={r.pattern}>
                     {r.pattern}
                   </code>
                 </td>
@@ -500,7 +500,7 @@ function RulesTab() {
                 <td className="px-3 py-2">
                   <div className="flex justify-end gap-1">
                     <button
-                      className="rounded-md p-1.5 text-gray-400 hover:bg-indigo-50 hover:text-indigo-600"
+                      className="rounded-md p-1.5 text-faint hover:bg-accent-soft hover:text-accent"
                       onClick={() => {
                         setEditing(r);
                         setModalOpen(true);
@@ -510,7 +510,7 @@ function RulesTab() {
                       <Pencil size={15} />
                     </button>
                     <button
-                      className="rounded-md p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600"
+                      className="rounded-md p-1.5 text-faint hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950 dark:hover:text-red-400"
                       onClick={() => remove(r)}
                       title="删除"
                     >
@@ -522,7 +522,7 @@ function RulesTab() {
             ))}
             {!loading && filtered.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-4 py-8 text-center text-sm text-gray-400">
+                <td colSpan={9} className="px-4 py-8 text-center text-sm text-faint">
                   {rules.length === 0 ? "暂无规则，点击右上角新增" : "没有符合筛选条件的规则"}
                 </td>
               </tr>
@@ -565,14 +565,14 @@ function AuditTab() {
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <Card className="p-0 overflow-hidden">
-        <h3 className="flex items-center gap-2 border-b border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-700">
+        <h3 className="flex items-center gap-2 border-b border-edge bg-inset px-3 py-2 text-sm font-semibold text-sub">
           <CheckCircle2 size={15} /> 鉴权事件（最近 50 条）
         </h3>
         <table className="w-full text-left text-sm">
-          <tbody className="divide-y divide-gray-100">
+          <tbody className="divide-y divide-edge">
             {authEvents.map((e) => (
-              <tr key={e.id} className="hover:bg-gray-50">
-                <td className="px-3 py-1.5 whitespace-nowrap text-gray-500">{e.createdAt.slice(5, 16)}</td>
+              <tr key={e.id} className="hover:bg-hover">
+                <td className="px-3 py-1.5 whitespace-nowrap text-muted">{e.createdAt.slice(5, 16)}</td>
                 <td className="px-3 py-1.5">
                   {e.success ? (
                     <span className="text-green-600">成功</span>
@@ -580,12 +580,12 @@ function AuditTab() {
                     <span className="text-red-600">失败 · {e.reason ?? "未知"}</span>
                   )}
                 </td>
-                <td className="px-3 py-1.5 font-mono text-xs text-gray-400">{e.keyId ?? "（匿名）"}</td>
+                <td className="px-3 py-1.5 font-mono text-xs text-faint">{e.keyId ?? "（匿名）"}</td>
               </tr>
             ))}
             {authEvents.length === 0 && (
               <tr>
-                <td colSpan={3} className="px-4 py-8 text-center text-sm text-gray-400">暂无鉴权事件</td>
+                <td colSpan={3} className="px-4 py-8 text-center text-sm text-faint">暂无鉴权事件</td>
               </tr>
             )}
           </tbody>
@@ -593,26 +593,26 @@ function AuditTab() {
       </Card>
 
       <Card className="p-0 overflow-hidden">
-        <h3 className="flex items-center gap-2 border-b border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-700">
+        <h3 className="flex items-center gap-2 border-b border-edge bg-inset px-3 py-2 text-sm font-semibold text-sub">
           <Shield size={15} /> 管理操作审计（最近 50 条）
         </h3>
         <table className="w-full text-left text-sm">
-          <tbody className="divide-y divide-gray-100">
+          <tbody className="divide-y divide-edge">
             {audits.map((a) => (
-              <tr key={a.id} className="hover:bg-gray-50">
-                <td className="px-3 py-1.5 whitespace-nowrap text-gray-500">{a.createdAt.slice(5, 16)}</td>
-                <td className="px-3 py-1.5 text-gray-700">
+              <tr key={a.id} className="hover:bg-hover">
+                <td className="px-3 py-1.5 whitespace-nowrap text-muted">{a.createdAt.slice(5, 16)}</td>
+                <td className="px-3 py-1.5 text-sub">
                   {actionLabels[a.action] ?? a.action}
-                  <span className="text-xs text-gray-400"> {targetLabels[a.targetType] ?? a.targetType}</span>
+                  <span className="text-xs text-faint"> {targetLabels[a.targetType] ?? a.targetType}</span>
                 </td>
                 <td className="px-3 py-1.5">
-                  <code className="font-mono text-xs text-gray-500">{a.detail ?? a.targetId ?? ""}</code>
+                  <code className="font-mono text-xs text-muted">{a.detail ?? a.targetId ?? ""}</code>
                 </td>
               </tr>
             ))}
             {audits.length === 0 && (
               <tr>
-                <td colSpan={3} className="px-4 py-8 text-center text-sm text-gray-400">暂无管理操作记录</td>
+                <td colSpan={3} className="px-4 py-8 text-center text-sm text-faint">暂无管理操作记录</td>
               </tr>
             )}
           </tbody>
@@ -638,13 +638,13 @@ export function Security() {
         title="安全"
         description="多引擎安全审计：检测（规则/隐写/命令/泄露比对）→ 策略决策 → 审计留痕"
       />
-      <div className="mb-4 flex flex-wrap gap-1 border-b border-gray-200">
+      <div className="mb-4 flex flex-wrap gap-1 border-b border-edge">
         {tabs.map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
             className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
-              tab === t.key ? "border-indigo-600 text-indigo-700" : "border-transparent text-gray-500 hover:text-gray-800"
+              tab === t.key ? "border-indigo-600 text-accent" : "border-transparent text-muted hover:text-sub"
             }`}
           >
             {t.label}

@@ -2,20 +2,24 @@ import { useEffect, useState } from "react";
 import { PageHeader, Card, Toggle } from "../components/ui";
 import { Button } from "../components/Modal";
 import { api } from "../api";
+import { saveTheme, type ThemePreference } from "../theme";
+import { isEnabled as autoStartEnabled, enable as autoStartEnable, disable as autoStartDisable } from "@tauri-apps/plugin-autostart";
+import { openPath } from "@tauri-apps/plugin-opener";
 
-type TabKey = "server" | "proxy" | "general" | "ui" | "retry" | "failover";
+type TabKey = "server" | "proxy" | "general" | "system" | "ui" | "retry" | "failover";
 
 const tabs: { key: TabKey; label: string }[] = [
   { key: "server", label: "服务配置" },
   { key: "proxy", label: "代理与安全" },
   { key: "general", label: "通用设置" },
+  { key: "system", label: "系统" },
   { key: "ui", label: "界面设置" },
   { key: "retry", label: "重试策略" },
   { key: "failover", label: "故障转移" },
 ];
 
 const inputCls =
-  "w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
+  "w-full rounded-md border border-strong bg-card px-3 py-1.5 text-sm text-main focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
 
 /** 绑定一个 settings KV 字段，自动读取回填并保存。 */
 function useSetting(key: string, fallback: string) {
@@ -36,8 +40,8 @@ function Row({ label, desc, children }: { label: string; desc?: string; children
   return (
     <div className="flex flex-col justify-between gap-2 py-3 sm:flex-row sm:items-center">
       <div>
-        <p className="text-sm font-medium text-gray-800">{label}</p>
-        {desc && <p className="text-xs text-gray-400">{desc}</p>}
+        <p className="text-sm font-medium text-sub">{label}</p>
+        {desc && <p className="text-xs text-faint">{desc}</p>}
       </div>
       <div className="sm:w-72">{children}</div>
     </div>
@@ -56,9 +60,9 @@ function ServerTab() {
   };
   return (
     <Card>
-      <h3 className="mb-2 text-sm font-semibold text-gray-700">监听服务</h3>
-      <p className="mb-2 text-xs text-gray-400">修改监听地址或端口后需重启应用生效</p>
-      <div className="divide-y divide-gray-100">
+      <h3 className="mb-2 text-sm font-semibold text-sub">监听服务</h3>
+      <p className="mb-2 text-xs text-faint">修改监听地址或端口后需重启应用生效</p>
+      <div className="divide-y divide-edge">
         <Row label="监听地址" desc="网关服务绑定地址（默认仅本机，对外开放请自行评估风险）">
           <input value={host.value ?? ""} onChange={(e) => host.setValue(e.target.value)} className={inputCls} />
         </Row>
@@ -92,17 +96,17 @@ function ProxyTab() {
   const endpoint = `http://127.0.0.1:${port.value ?? 8787}${basePath.value ?? "/v1"}/chat/completions`;
   return (
     <Card>
-      <h3 className="mb-2 text-sm font-semibold text-gray-700">转发代理</h3>
-      <div className="divide-y divide-gray-100">
+      <h3 className="mb-2 text-sm font-semibold text-sub">转发代理</h3>
+      <div className="divide-y divide-edge">
         <Row label="启用代理" desc="关闭后代理返回 503，不影响应用其他功能">
           <Toggle checked={enabled.value === "true"} onChange={(v) => enabled.setValue(String(v))} />
         </Row>
         <Row label="服务地址" desc="本地程序接入时配置 Base URL 为以下地址，并使用 sk-llmapi-* 密钥">
-          <code className="block rounded-md bg-gray-100 px-3 py-1.5 text-xs text-gray-700">{endpoint}</code>
+          <code className="block rounded-md bg-inset px-3 py-1.5 text-xs text-sub">{endpoint}</code>
         </Row>
       </div>
-      <h3 className="mb-2 mt-6 text-sm font-semibold text-gray-700">安全扫描与脱敏</h3>
-      <div className="divide-y divide-gray-100">
+      <h3 className="mb-2 mt-6 text-sm font-semibold text-sub">安全扫描与脱敏</h3>
+      <div className="divide-y divide-edge">
         <Row
           label="启用安全扫描"
           desc="扫描请求与响应中的敏感信息（密钥/密码/手机号/证件号）与提示注入特征"
@@ -139,8 +143,8 @@ function GeneralTab() {
   };
   return (
     <Card>
-      <h3 className="mb-2 text-sm font-semibold text-gray-700">日志与默认值</h3>
-      <div className="divide-y divide-gray-100">
+      <h3 className="mb-2 text-sm font-semibold text-sub">日志与默认值</h3>
+      <div className="divide-y divide-edge">
         <Row label="启用请求日志" desc="记录所有经过网关的请求">
           <Toggle checked={enableLogging.value === "true"} onChange={(v) => enableLogging.setValue(String(v))} />
         </Row>
@@ -159,6 +163,95 @@ function GeneralTab() {
   );
 }
 
+function SystemTab() {
+  const closeToTray = useSetting("general.close_to_tray", "true");
+  const [autoStart, setAutoStart] = useState(false);
+  const [autoStartLoaded, setAutoStartLoaded] = useState(false);
+  const [fileInfo, setFileInfo] = useState<{ path: string; exists: boolean } | null>(null);
+  const [reloadMsg, setReloadMsg] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    autoStartEnabled().then(setAutoStart).catch(() => {}).finally(() => setAutoStartLoaded(true));
+  }, []);
+  useEffect(() => {
+    api.settingsFileInfo().then(setFileInfo).catch(() => {});
+  }, []);
+
+  const toggleAutoStart = async (v: boolean) => {
+    try {
+      // 自启时附加 --hidden（Rust 端 init 时配置）：启动后直接隐藏到托盘
+      if (v) {
+        await autoStartEnable();
+      } else {
+        await autoStartDisable();
+      }
+      setAutoStart(v);
+    } catch (e) {
+      console.error("切换开机自启失败", e);
+    }
+  };
+
+  const saveCloseToTray = async () => {
+    await closeToTray.save();
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
+  };
+
+  const openConfigDir = async () => {
+    if (!fileInfo) return;
+    // 取文件所在目录（Windows 路径反斜杠分隔）
+    const dir = fileInfo.path.replace(/\\[^\\]*$/, "");
+    await openPath(dir);
+  };
+
+  const reloadFromFile = async () => {
+    try {
+      const n = await api.reloadSettingsFile();
+      setReloadMsg(`已从配置文件导入 ${n} 项设置`);
+      // 刷新本页展示
+      api.settingsFileInfo().then(setFileInfo).catch(() => {});
+    } catch (e) {
+      setReloadMsg(`导入失败：${e}`);
+    }
+    setTimeout(() => setReloadMsg(null), 3000);
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <h3 className="mb-2 text-sm font-semibold text-sub">启动与窗口</h3>
+        <div className="divide-y divide-edge">
+          <Row label="开机自启" desc="登录 Windows 后自动运行（自启时隐藏到托盘，代理照常提供服务）">
+            <Toggle checked={autoStart} onChange={toggleAutoStart} disabled={!autoStartLoaded} />
+          </Row>
+          <Row label="关闭到托盘" desc="点击窗口关闭按钮时隐藏到托盘，进程继续运行；彻底退出请用托盘菜单">
+            <Toggle checked={closeToTray.value === "true"} onChange={(v) => closeToTray.setValue(String(v))} />
+          </Row>
+        </div>
+        <div className="mt-4 flex items-center justify-end gap-3">
+          {saved && <span className="text-xs text-green-600">已保存</span>}
+          <Button onClick={saveCloseToTray}>保存窗口设置</Button>
+        </div>
+      </Card>
+
+      <Card>
+        <h3 className="mb-2 text-sm font-semibold text-sub">配置文件（settings.json）</h3>
+        <p className="mb-2 text-xs text-faint">
+          所有设置以 JSON 键值形式存放在配置文件中（与 Tauri Store 同格式，可手改）。
+          应用启动时自动导入；在页面中修改的设置会同步写回文件。
+        </p>
+        <code className="block rounded-md bg-inset px-3 py-2 text-xs text-sub">{fileInfo?.path ?? "加载中…"}</code>
+        <div className="mt-3 flex items-center gap-3">
+          <Button variant="secondary" onClick={openConfigDir} disabled={!fileInfo}>打开配置目录</Button>
+          <Button variant="secondary" onClick={reloadFromFile} disabled={!fileInfo?.exists}>从文件重新加载</Button>
+          {reloadMsg && <span className="text-xs text-green-600">{reloadMsg}</span>}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 function UiTab() {
   const theme = useSetting("ui.theme", "system");
   const compact = useSetting("ui.compact", "false");
@@ -171,10 +264,18 @@ function UiTab() {
   };
   return (
     <Card>
-      <h3 className="mb-2 text-sm font-semibold text-gray-700">外观</h3>
-      <div className="divide-y divide-gray-100">
-        <Row label="主题" desc="亮色 / 暗色 / 跟随系统">
-          <select value={theme.value ?? "system"} onChange={(e) => theme.setValue(e.target.value)} className={inputCls}>
+      <h3 className="mb-2 text-sm font-semibold text-sub">外观</h3>
+      <div className="divide-y divide-edge">
+        <Row label="主题" desc="亮色 / 暗色 / 跟随系统（跟随系统时自动响应系统主题变化）">
+          <select
+            value={theme.value ?? "system"}
+            onChange={(e) => {
+              theme.setValue(e.target.value);
+              // 即时预览：选择后立即切换，保存按钮负责落库
+              saveTheme(e.target.value as ThemePreference);
+            }}
+            className={inputCls}
+          >
             <option value="light">亮色</option>
             <option value="dark">暗色</option>
             <option value="system">跟随系统</option>
@@ -208,8 +309,8 @@ function RetryTab() {
   };
   return (
     <Card>
-      <h3 className="mb-2 text-sm font-semibold text-gray-700">重试策略</h3>
-      <div className="divide-y divide-gray-100">
+      <h3 className="mb-2 text-sm font-semibold text-sub">重试策略</h3>
+      <div className="divide-y divide-edge">
         <Row label="启用自动重试" desc="请求失败时自动重试">
           <Toggle checked={enabled.value === "true"} onChange={(v) => enabled.setValue(String(v))} />
         </Row>
@@ -246,8 +347,8 @@ function FailoverTab() {
   };
   return (
     <Card>
-      <h3 className="mb-2 text-sm font-semibold text-gray-700">多渠道容灾</h3>
-      <div className="divide-y divide-gray-100">
+      <h3 className="mb-2 text-sm font-semibold text-sub">多渠道容灾</h3>
+      <div className="divide-y divide-edge">
         <Row
           label="启用故障转移"
           desc="正常请求固定走主渠道（优先级最高）；主渠道失败时按队列顺序尝试备用渠道。关闭则失败即报错"
@@ -277,13 +378,13 @@ export function Settings() {
   return (
     <div>
       <PageHeader title="设置" description="配置网关运行参数" />
-      <div className="mb-4 flex flex-wrap gap-1 border-b border-gray-200">
+      <div className="mb-4 flex flex-wrap gap-1 border-b border-edge">
         {tabs.map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
             className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
-              tab === t.key ? "border-indigo-600 text-indigo-700" : "border-transparent text-gray-500 hover:text-gray-800"
+              tab === t.key ? "border-indigo-600 text-accent" : "border-transparent text-muted hover:text-sub"
             }`}
           >
             {t.label}
@@ -293,6 +394,7 @@ export function Settings() {
       {tab === "server" && <ServerTab />}
       {tab === "proxy" && <ProxyTab />}
       {tab === "general" && <GeneralTab />}
+      {tab === "system" && <SystemTab />}
       {tab === "ui" && <UiTab />}
       {tab === "retry" && <RetryTab />}
       {tab === "failover" && <FailoverTab />}

@@ -40,19 +40,19 @@ export function Dashboard() {
       <PageHeader title="仪表盘" description="今日网关运行概览" />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard icon={<Activity size={20} className="text-indigo-600" />} color="bg-indigo-50" label="今日请求数" value={requests.toLocaleString()} />
-        <StatCard icon={<Coins size={20} className="text-violet-600" />} color="bg-violet-50" label="Token 消耗" value={tokens.toLocaleString()} />
-        <StatCard icon={<Radio size={20} className="text-emerald-600" />} color="bg-emerald-50" label="活跃渠道数" value={String(activeChannels)} />
-        <StatCard icon={<Timer size={20} className="text-amber-600" />} color="bg-amber-50" label="平均延迟" value={String(Math.round(avg))} unit="ms" />
+        <StatCard icon={<Activity size={20} className="text-accent" />} color="bg-accent-soft" label="今日请求数" value={requests.toLocaleString()} />
+        <StatCard icon={<Coins size={20} className="text-violet-600" />} color="bg-violet-50 dark:bg-violet-950" label="Token 消耗" value={tokens.toLocaleString()} />
+        <StatCard icon={<Radio size={20} className="text-emerald-600" />} color="bg-emerald-50 dark:bg-emerald-950" label="活跃渠道数" value={String(activeChannels)} />
+        <StatCard icon={<Timer size={20} className="text-amber-600" />} color="bg-amber-50 dark:bg-amber-950" label="平均延迟" value={String(Math.round(avg))} unit="ms" />
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
-          <h3 className="mb-4 text-sm font-semibold text-gray-700">近 7 天请求趋势</h3>
+          <h3 className="mb-4 text-sm font-semibold text-sub">近 7 天请求趋势</h3>
           <Chart values={daily.map((d) => d.requests)} max={maxReq} labels={daily.map((d) => d.date.slice(5))} color="bg-indigo-500/80" />
         </Card>
         <Card>
-          <h3 className="mb-4 text-sm font-semibold text-gray-700">近 7 天 Token 消耗</h3>
+          <h3 className="mb-4 text-sm font-semibold text-sub">近 7 天 Token 消耗</h3>
           <Chart values={daily.map((d) => d.tokens)} max={maxTok} labels={daily.map((d) => d.date.slice(5))} color="bg-violet-500/80" />
         </Card>
       </div>
@@ -64,10 +64,10 @@ function StatCard({ icon, label, value, unit, color }: { icon: React.ReactNode; 
   return (
     <Card>
       <div className={`flex h-11 w-11 items-center justify-center rounded-lg ${color}`}>{icon}</div>
-      <p className="mt-4 text-sm text-gray-500">{label}</p>
-      <p className="mt-1 text-2xl font-bold text-gray-900">
+      <p className="mt-4 text-sm text-muted">{label}</p>
+      <p className="mt-1 text-2xl font-bold text-main">
         {value}
-        {unit && <span className="ml-1 text-sm font-normal text-gray-400">{unit}</span>}
+        {unit && <span className="ml-1 text-sm font-normal text-faint">{unit}</span>}
       </p>
     </Card>
   );
@@ -86,10 +86,10 @@ function Chart({ values, max, labels, color }: { values: number[]; max: number; 
               title={v.toLocaleString()}
             />
           </div>
-          <span className="mt-1 text-[10px] text-gray-400">{labels[i]}</span>
+          <span className="mt-1 text-[10px] text-faint">{labels[i]}</span>
         </div>
       ))}
-      {values.length === 0 && <p className="w-full py-16 text-center text-sm text-gray-400">暂无数据</p>}
+      {values.length === 0 && <p className="w-full py-16 text-center text-sm text-faint">暂无数据</p>}
     </div>
   );
 }

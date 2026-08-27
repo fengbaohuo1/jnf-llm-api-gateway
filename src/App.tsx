@@ -10,7 +10,7 @@ import { Settings } from "./pages/Settings";
 
 function App() {
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-50 text-gray-900">
+    <div className="flex h-screen overflow-hidden bg-app text-main">
       <Sidebar />
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-[1440px] px-4 py-4">

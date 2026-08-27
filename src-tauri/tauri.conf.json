@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "llm-api-gateway",
-  "version": "0.1.0",
-  "identifier": "jainingfei.site.llmapi",
+  "productName": "LLM API Gateway",
+  "version": "1.0.0",
+  "identifier": "jianingfei.site.llmapi",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "llm-api-gateway",
+        "title": "LLM API 网关",
         "width": 1280,
         "height": 800,
         "minWidth": 1024,
@@ -25,13 +25,20 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": "nsis",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["SimpChinese", "English"],
+        "displayLanguageSelector": false
+      }
+    }
   }
 }

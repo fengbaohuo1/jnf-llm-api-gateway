@@ -184,6 +184,9 @@ export const api = {
   listSettings: () => invoke<{ key: string; value: string }[]>("list_settings"),
   getSetting: (key: string) => invoke<string | null>("get_setting", { key }),
   setSetting: (key: string, value: string) => invoke("set_setting", { key, value }),
+  settingsFileInfo: () =>
+    invoke<{ path: string; exists: boolean }>("settings_file_info"),
+  reloadSettingsFile: () => invoke<number>("reload_settings_file"),
 
   // ---- Daily stats ----
   listDailyStats: (limit: number) =>

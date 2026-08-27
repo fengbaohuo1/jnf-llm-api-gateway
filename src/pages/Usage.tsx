@@ -63,13 +63,13 @@ export function Usage() {
         title="用量"
         description="查看请求量与 Token 消耗（精确到个位）"
         actions={
-          <div className="flex rounded-lg border border-gray-200 p-0.5">
+          <div className="flex rounded-lg border border-edge p-0.5">
             {ranges.map((r) => (
               <button
                 key={r.key}
                 onClick={() => setRange(r.key)}
                 className={`rounded-md px-3 py-1 text-sm font-medium ${
-                  range === r.key ? "bg-indigo-600 text-white" : "text-gray-600 hover:bg-gray-100"
+                  range === r.key ? "bg-indigo-600 text-white" : "text-muted hover:bg-hover"
                 }`}
               >
                 {r.key}
@@ -81,13 +81,13 @@ export function Usage() {
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Card>
-          <p className="text-xs text-gray-500">请求总数</p>
-          <p className="mt-1 text-2xl font-bold text-gray-900">{fmt(totals.requests)}</p>
+          <p className="text-xs text-muted">请求总数</p>
+          <p className="mt-1 text-2xl font-bold text-main">{fmt(totals.requests)}</p>
         </Card>
         <Card>
-          <p className="text-xs text-gray-500">Token 总消耗</p>
-          <p className="mt-1 text-2xl font-bold text-gray-900">{fmt(totals.tokens)}</p>
-          <p className="mt-1 text-xs text-gray-400">
+          <p className="text-xs text-muted">Token 总消耗</p>
+          <p className="mt-1 text-2xl font-bold text-main">{fmt(totals.tokens)}</p>
+          <p className="mt-1 text-xs text-faint">
             缓存命中率{" "}
             <span className="font-medium text-emerald-600">
               {hitRate === null ? "—" : `${hitRate.toFixed(1)}%`}
@@ -95,16 +95,16 @@ export function Usage() {
           </p>
         </Card>
         <Card>
-          <p className="text-xs text-gray-500">预估成本</p>
-          <p className="mt-1 text-2xl font-bold text-gray-900">¥{totals.cost.toFixed(3)}</p>
+          <p className="text-xs text-muted">预估成本</p>
+          <p className="mt-1 text-2xl font-bold text-main">¥{totals.cost.toFixed(3)}</p>
         </Card>
       </div>
 
       <Card className="mt-4">
-        <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold text-gray-700">
+        <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold text-sub">
           <BarChart3 size={15} /> Token 消耗构成（近 {ranges.find((r) => r.key === range)!.days} 天）
         </h3>
-        <div className="mb-3 flex items-center gap-4 text-xs text-gray-500">
+        <div className="mb-3 flex items-center gap-4 text-xs text-muted">
           <span className="flex items-center gap-1.5">
             <span className="h-2.5 w-2.5 rounded-sm bg-emerald-500" /> 命中缓存
           </span>
@@ -122,15 +122,15 @@ export function Usage() {
             return (
               <div key={i} className="group relative flex h-full min-w-0 flex-1 flex-col items-center">
                 {/* 悬停浮窗：标明当天各类 token 数量 */}
-                <div className="pointer-events-none absolute -top-1 left-1/2 z-10 hidden -translate-x-1/2 -translate-y-full flex-col gap-0.5 whitespace-nowrap rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs shadow-lg group-hover:flex">
-                  <p className="mb-0.5 font-semibold text-gray-900">
+                <div className="pointer-events-none absolute -top-1 left-1/2 z-10 hidden -translate-x-1/2 -translate-y-full flex-col gap-0.5 whitespace-nowrap rounded-lg border border-edge bg-card px-3 py-2 text-xs shadow-lg group-hover:flex">
+                  <p className="mb-0.5 font-semibold text-main">
                     {p.date} · 总计 {fmt(p.tokens)}
                   </p>
                   <p className="text-emerald-600">命中缓存 {fmt(p.cacheHitTokens)}</p>
                   <p className="text-sky-600">未命中 {fmt(miss)}</p>
                   <p className="text-violet-600">输出 {fmt(p.completionTokens)}</p>
                 </div>
-                <span className="mb-1 truncate text-[10px] font-medium text-gray-500" title={fmt(p.tokens)}>
+                <span className="mb-1 truncate text-[10px] font-medium text-muted" title={fmt(p.tokens)}>
                   {fmt(p.tokens)}
                 </span>
                 {/* 柱子区域：h-40 定高 → 绝对定位百分比高度，避免 flex 百分比解析异常导致贴底 */}
@@ -145,11 +145,11 @@ export function Usage() {
                     <div className="bg-violet-500/80" style={{ height: `${(p.completionTokens / denom) * 100}%` }} />
                   </div>
                 </div>
-                <span className="mt-1 text-[10px] text-gray-400">{p.date.slice(5)}</span>
+                <span className="mt-1 text-[10px] text-faint">{p.date.slice(5)}</span>
               </div>
             );
           })}
-          {daily.length === 0 && <p className="w-full py-20 text-center text-sm text-gray-400">暂无数据</p>}
+          {daily.length === 0 && <p className="w-full py-20 text-center text-sm text-faint">暂无数据</p>}
         </div>
       </Card>
     </div>
