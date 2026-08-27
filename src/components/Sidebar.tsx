@@ -24,9 +24,9 @@ export function Sidebar() {
     <aside className="flex w-52 flex-shrink-0 flex-col border-r border-edge bg-card">
       <div className="flex items-center gap-2 px-4 py-4">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2">
-            <path d="M12 2 2 7l10 5 10-5-10-5Z" />
-            <path d="m2 17 10 5 10-5M2 12l10 5 10-5" />
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.7" strokeLinecap="round">
+            <path d="M4.5 8 10 10.5M4.5 16 10 13.5M14 10.5 19.5 8M14 13.5 19.5 16" />
+            <circle cx="12" cy="12" r="3.2" fill="white" stroke="none" />
           </svg>
         </div>
         <div>

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- 方案 A：汇聚分发（网关语义：多路请求汇聚 → 网关 → 多路分发） -->
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4F46E5"/>
+      <stop offset="1" stop-color="#8B5CF6"/>
+    </linearGradient>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#g)"/>
+  <g stroke="#FFFFFF" stroke-width="36" stroke-linecap="round" fill="none">
+    <line x1="196" y1="372" x2="428" y2="462"/>
+    <line x1="196" y1="652" x2="428" y2="562"/>
+    <line x1="596" y1="462" x2="828" y2="372"/>
+    <line x1="596" y1="562" x2="828" y2="652"/>
+  </g>
+  <circle cx="512" cy="512" r="80" fill="#FFFFFF"/>
+</svg>
