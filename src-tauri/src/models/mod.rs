@@ -55,11 +55,19 @@ pub struct CreatedKey {
 pub struct RequestLog {
     pub id: String,
     pub timestamp: String,
-    pub channel_id: String,
-    pub channel_name: String,
+    pub channel_id: Option<String>,
+    pub channel_name: Option<String>,
     pub key_id: Option<String>,
     pub key_name: Option<String>,
     pub model: String,
+    /// 客户端入口协议：openai / anthropic / responses
+    pub protocol: String,
+    /// 是否流式请求
+    pub stream: bool,
+    /// 客户端 User-Agent（个人工具识别是哪个客户端在调用）
+    pub client_ua: String,
+    /// 本次请求尝试的渠道数（成功行 = 第几次尝试成功；失败行 = 已尝试次数）
+    pub attempts: i64,
     pub status: i64,
     pub latency_ms: i64,
     pub prompt_tokens: i64,
@@ -71,6 +79,21 @@ pub struct RequestLog {
     pub reasoning_tokens: i64,
     pub cost: f64,
     pub error: Option<String>,
+}
+
+/// 请求内容明细（0010）：请求/转发/响应/错误的完整 JSON，一对一行按需加载
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestDetail {
+    pub request_id: String,
+    /// 收到的原始请求体（客户端协议原文，脱敏后落库）
+    pub request_body: Option<String>,
+    /// 实际发给上游的请求体（内部 OpenAI 格式，脱敏 + 转换 + stream_options 注入后）
+    pub upstream_body: Option<String>,
+    /// 成功响应体（非流式原文 / 流式重建完整响应）
+    pub response_body: Option<String>,
+    /// 失败时的错误响应体（上游错误 JSON / 网关错误 JSON）
+    pub error_body: Option<String>,
 }
 
 #[derive(Serialize, FromRow)]

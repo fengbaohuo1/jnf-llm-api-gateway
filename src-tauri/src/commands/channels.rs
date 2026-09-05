@@ -164,7 +164,28 @@ pub async fn test_channel(state: State<'_, DbState>, id: String) -> Result<serde
     // 2. 创建适配器并真实测试
     let adapter = crate::adapters::create_adapter(&ctype, &base_url, &api_key)
         .map_err(|e| e.to_string())?;
-    let result = adapter.test().await.map_err(|e| e.to_string())?;
+    // 失败不再抛长错误串，改为结构化返回：ok=false + 简短错误码 + 完整 message
+    let result = match adapter.test().await {
+        Ok(r) => r,
+        Err(e) => {
+            let code = adapter_error_code(&e);
+            let message = e.to_string();
+            sqlx::query("UPDATE channels SET status = 'error', latency_ms = NULL, updated_at = ?2 WHERE id = ?1")
+                .bind(&id)
+                .bind(now_iso())
+                .execute(pool(&state))
+                .await
+                .map_err(|e| e.to_string())?;
+            return Ok(serde_json::json!({
+                "ok": false,
+                "latencyMs": null,
+                "message": message,
+                "code": code,
+                "model": model,
+                "protocol": adapter.channel_type(),
+            }));
+        }
+    };
 
     // 3. 更新渠道状态与延迟
     if result.ok {
@@ -189,7 +210,26 @@ pub async fn test_channel(state: State<'_, DbState>, id: String) -> Result<serde
         "ok": result.ok,
         "latencyMs": result.latency_ms,
         "message": result.message,
+        "code": null,
         "model": model,
         "protocol": adapter.channel_type(),
     }))
+}
+
+/// 把适配器错误映射为简短展示码（HTTP 状态码 / 网络 / 解析 / 配置）
+fn adapter_error_code(e: &crate::adapters::AdapterError) -> String {
+    match e {
+        crate::adapters::AdapterError::Upstream { status, .. } => format!("HTTP {status}"),
+        crate::adapters::AdapterError::Http(err) => {
+            if err.is_timeout() {
+                "超时".into()
+            } else if err.is_connect() {
+                "网络错误".into()
+            } else {
+                "请求失败".into()
+            }
+        }
+        crate::adapters::AdapterError::Parse(_) => "解析失败".into(),
+        crate::adapters::AdapterError::Config(_) => "配置错误".into(),
+    }
 }

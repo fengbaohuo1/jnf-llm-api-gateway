@@ -39,12 +39,34 @@ export interface RequestLog {
   channel: string;
   model: string;
   key: string;
+  /** 客户端入口协议：openai / anthropic / responses */
+  protocol: string;
+  /** 是否流式请求 */
+  stream: boolean;
+  /** 客户端 User-Agent */
+  clientUa: string;
+  /** 第几次尝试（1 = 主渠道一次成功） */
+  attempts: number;
   status: number;
   latencyMs: number;
+  promptTokens: number; // 输入 token 数（缓存命中率的分母）
   tokens: number;
   cacheHitTokens: number; // 输入中命中前缀缓存的 token 数
   reasoningTokens: number; // 输出中用于思考（reasoning）的 token 数
   cost: number; // 成本（元）
+}
+
+/** 请求内容明细（按需加载；开启内容记录时有值） */
+export interface RequestDetail {
+  requestId: string;
+  /** 收到的原始请求体（客户端协议原文，脱敏后） */
+  requestBody: string | null;
+  /** 实际发给上游的请求体（内部 OpenAI 格式） */
+  upstreamBody: string | null;
+  /** 成功响应体（非流式原文 / 流式重建完整响应） */
+  responseBody: string | null;
+  /** 失败时的错误响应体 */
+  errorBody: string | null;
 }
 
 export interface SecurityLog {

@@ -22,6 +22,7 @@
 pub mod auth;
 pub mod forward;
 pub mod handlers;
+pub mod protocol;
 pub mod settings;
 pub mod stream;
 
@@ -60,6 +61,12 @@ pub(crate) struct PreparedRequest {
     pub(crate) request_secrets: Vec<String>,
     /// 请求侧消息总字符数（流式无精确 usage 时的估算输入）
     pub(crate) prompt_chars: (u64, u64),
+    /// 客户端 User-Agent（日志上下文，截断 200 字符）
+    pub(crate) client_ua: String,
+    /// 收到的原始请求 JSON（客户端协议原文，脱敏后；内容记录启用时才有）
+    pub(crate) request_body: Option<String>,
+    /// 实际转发体 JSON（内部 OpenAI 格式，脱敏后；内容记录启用时才有）
+    pub(crate) upstream_body: Option<String>,
 }
 
 /// 启动本地 HTTP 服务（地址取自 settings `server.host`/`server.port`，默认 127.0.0.1:8787）。
@@ -81,6 +88,8 @@ pub async fn serve(pool: SqlitePool, scanner: Arc<dyn SecurityScanner>) {
 
     let app = Router::new()
         .route("/v1/chat/completions", post(handlers::handle_chat_completion))
+        .route("/v1/messages", post(handlers::handle_anthropic_message))
+        .route("/v1/responses", post(handlers::handle_responses))
         .route("/v1/models", get(handlers::handle_models))
         .route("/health", get(handlers::handle_health))
         .fallback(handlers::handle_not_found)

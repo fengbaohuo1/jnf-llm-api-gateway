@@ -5,6 +5,7 @@ import type {
   ChannelStatus,
   ChannelType,
   RequestLog,
+  RequestDetail,
   SecurityLog,
   SecurityRule,
 } from "../types";
@@ -42,15 +43,28 @@ const mapKey = (k: RawKey): ApiKey => ({
 const mapLog = (l: RawLog): RequestLog => ({
   id: l.id,
   timestamp: l.timestamp,
-  channel: l.channelName,
+  channel: l.channelName ?? "",
   model: l.model,
   key: l.keyName ?? "",
+  protocol: l.protocol,
+  stream: l.stream,
+  clientUa: l.clientUa,
+  attempts: l.attempts,
   status: l.status,
   latencyMs: l.latencyMs,
+  promptTokens: l.promptTokens,
   tokens: l.totalTokens,
   cacheHitTokens: l.cacheHitTokens,
   reasoningTokens: l.reasoningTokens,
   cost: l.cost,
+});
+
+const mapDetail = (d: RawDetail): RequestDetail => ({
+  requestId: d.requestId,
+  requestBody: d.requestBody,
+  upstreamBody: d.upstreamBody,
+  responseBody: d.responseBody,
+  errorBody: d.errorBody,
 });
 
 // ---- Channels ----
@@ -93,7 +107,10 @@ export const api = {
   deleteChannel: (id: string) => invoke("delete_channel", { id }),
   toggleChannelStatus: (id: string) => invoke("toggle_channel_status", { id }),
   testChannel: (id: string) =>
-    invoke<{ ok: boolean; latencyMs: number | null; message: string; model: string }>("test_channel", { id }),
+    invoke<{ ok: boolean; latencyMs: number | null; message: string; model: string; code: string | null }>(
+      "test_channel",
+      { id },
+    ),
 
   // ---- Keys ----
   listKeys: async (): Promise<ApiKey[]> =>
@@ -114,6 +131,8 @@ export const api = {
   listRequests: (input: { keyword?: string; channel?: string; model?: string }) =>
     invoke<RawLog[]>("list_requests", { ...input }).then((rows) => rows.map(mapLog)),
   insertRequest: (input: Record<string, unknown>) => invoke("insert_request", { ...input }),
+  getRequestDetail: (id: string) =>
+    invoke<RawDetail | null>("get_request_detail", { id }).then((d) => (d ? mapDetail(d) : null)),
 
   // ---- Security logs ----
   listSecurityLogs: (input?: { requestId?: string; risk?: string; stage?: string }) =>
@@ -233,11 +252,15 @@ interface RawCreatedKey {
 interface RawLog {
   id: string;
   timestamp: string;
-  channelId: string;
-  channelName: string;
+  channelId: string | null;
+  channelName: string | null;
   keyId: string | null;
   keyName: string | null;
   model: string;
+  protocol: string;
+  stream: boolean;
+  clientUa: string;
+  attempts: number;
   status: number;
   latencyMs: number;
   promptTokens: number;
@@ -247,6 +270,13 @@ interface RawLog {
   reasoningTokens: number;
   cost: number;
   error: string | null;
+}
+interface RawDetail {
+  requestId: string;
+  requestBody: string | null;
+  upstreamBody: string | null;
+  responseBody: string | null;
+  errorBody: string | null;
 }
 interface RawDailyStat {
   date: string;

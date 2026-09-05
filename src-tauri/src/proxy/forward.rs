@@ -10,7 +10,16 @@ use super::ProxyState;
 #[derive(Debug)]
 pub(crate) struct ForwardError {
     pub(crate) retryable: bool,
+    /// 给用户/日志的简短错误描述（正文截断 300 字符）
     pub(crate) message: String,
+    /// 上游错误响应原文（非 2xx 时携带，供内容明细落库，上限 64KB）
+    pub(crate) error_body: Option<String>,
+}
+
+impl ForwardError {
+    fn new(retryable: bool, message: impl Into<String>) -> Self {
+        Self { retryable, message: message.into(), error_body: None }
+    }
 }
 
 /// 透传转发（非流式）：请求体原样发给上游（只改 URL 与 Authorization），响应原样返回
@@ -29,10 +38,7 @@ pub(crate) async fn forward_to_channel(
     {
         Ok(r) => r,
         Err(e) => {
-            return Err(ForwardError {
-                retryable: true, // 网络错误 / 超时：可转移
-                message: format!("网络错误或超时: {e}"),
-            });
+            return Err(ForwardError::new(true, format!("网络错误或超时: {e}")));
         }
     };
 
@@ -40,10 +46,7 @@ pub(crate) async fn forward_to_channel(
     let bytes = match resp.bytes().await {
         Ok(b) => b,
         Err(e) => {
-            return Err(ForwardError {
-                retryable: false,
-                message: format!("读取上游响应失败: {e}"),
-            });
+            return Err(ForwardError::new(false, format!("读取上游响应失败: {e}")));
         }
     };
 
@@ -52,13 +55,13 @@ pub(crate) async fn forward_to_channel(
         let retryable = status.is_server_error() || status.as_u16() == 429;
         return Err(ForwardError {
             retryable,
+            error_body: Some(clamp_body(&text)),
             message: format!("上游 {status}: {}", truncate(&text, 300)),
         });
     }
 
-    serde_json::from_slice(&bytes).map_err(|e| ForwardError {
-        retryable: false,
-        message: format!("上游响应解析失败: {e}"),
+    serde_json::from_slice(&bytes).map_err(|e| {
+        ForwardError::new(false, format!("上游响应解析失败: {e}"))
     })
 }
 
@@ -79,22 +82,33 @@ pub(crate) async fn forward_stream_to_channel(
     {
         Ok(r) => r,
         Err(e) => {
-            return Err(ForwardError {
-                retryable: true, // 网络错误 / 超时：可转移
-                message: format!("网络错误或超时: {e}"),
-            });
+            return Err(ForwardError::new(true, format!("网络错误或超时: {e}")));
         }
     };
     let status = resp.status();
     if !status.is_success() {
         let retryable = status.is_server_error() || status.as_u16() == 429;
-        let message = match resp.text().await {
-            Ok(t) => format!("上游 {status}: {}", truncate(&t, 300)),
-            Err(_) => format!("上游 {status}"),
+        let (message, error_body) = match resp.text().await {
+            Ok(t) => (
+                format!("上游 {status}: {}", truncate(&t, 300)),
+                Some(clamp_body(&t)),
+            ),
+            Err(_) => (format!("上游 {status}"), None),
         };
-        return Err(ForwardError { retryable, message });
+        return Err(ForwardError { retryable, message, error_body });
     }
     Ok(resp)
+}
+
+/// 错误响应体落库上限（64KB，避免异常大错误响应撑爆明细表）
+fn clamp_body(s: &str) -> String {
+    if s.len() <= 64 * 1024 {
+        s.to_string()
+    } else {
+        let mut t = s[..64 * 1024].to_string();
+        t.push_str("…[正文超长已截断]");
+        t
+    }
 }
 
 /// 上游 usage 中的 token 明细（缓存/思考感知计费的输入）

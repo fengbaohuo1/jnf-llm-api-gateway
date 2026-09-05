@@ -133,11 +133,12 @@ function ProxyTab() {
 
 function GeneralTab() {
   const enableLogging = useSetting("general.enable_logging", "true");
-  const logRetention = useSetting("general.log_retention", "30");
+  const logContent = useSetting("log.content_enabled", "true");
+  const logRetention = useSetting("general.log_retention", "0");
   const defaultModel = useSetting("general.default_model", "gpt-4o");
   const [saved, setSaved] = useState(false);
   const saveAll = async () => {
-    await Promise.all([enableLogging.save(), logRetention.save(), defaultModel.save()]);
+    await Promise.all([enableLogging.save(), logContent.save(), logRetention.save(), defaultModel.save()]);
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
@@ -148,7 +149,13 @@ function GeneralTab() {
         <Row label="启用请求日志" desc="记录所有经过网关的请求">
           <Toggle checked={enableLogging.value === "true"} onChange={(v) => enableLogging.setValue(String(v))} />
         </Row>
-        <Row label="日志保留天数">
+        <Row
+          label="记录请求与响应内容"
+          desc="在日志中保存完整请求体、转发体与响应体（经安全脱敏）。关闭后仅记录概要，日志行不再可展开详情"
+        >
+          <Toggle checked={logContent.value === "true"} onChange={(v) => logContent.setValue(String(v))} />
+        </Row>
+        <Row label="日志保留天数" desc="明细与请求超过 N 天后自动清理（0 = 永久保留）">
           <input value={logRetention.value ?? ""} onChange={(e) => logRetention.setValue(e.target.value)} className={inputCls} type="number" />
         </Row>
         <Row label="默认模型">

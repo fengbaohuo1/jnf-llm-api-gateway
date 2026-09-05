@@ -42,7 +42,13 @@ interface AppState {
   }) => Promise<void>;
   removeChannel: (id: string) => Promise<void>;
   toggleChannelStatus: (id: string) => Promise<void>;
-  testChannel: (id: string) => Promise<{ ok: boolean; latencyMs: number | null; message: string; model: string }>;
+  testChannel: (id: string) => Promise<{
+    ok: boolean;
+    latencyMs: number | null;
+    message: string;
+    model: string;
+    code: string | null;
+  }>;
 
   createKey: (input: { name: string; quotaLimit: number; expiresAt: string | null }) => Promise<{
     id: string;

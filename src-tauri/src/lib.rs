@@ -166,6 +166,7 @@ pub fn run() {
             commands::keys::toggle_key_status,
             // requests
             commands::requests::list_requests,
+            commands::requests::get_request_detail,
             commands::requests::insert_request,
             // security
             commands::security::list_security_logs,

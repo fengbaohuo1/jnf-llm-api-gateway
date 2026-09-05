@@ -226,7 +226,9 @@ export function Channels() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Channel | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Channel | null>(null);
+  // 测试结果摘要（行内展示）+ 完整信息（悬停提示）
   const [testMsg, setTestMsg] = useState<Record<string, string>>({});
+  const [testTitle, setTestTitle] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -306,11 +308,22 @@ export function Channels() {
 
   const handleTest = async (id: string) => {
     setTestMsg((m) => ({ ...m, [id]: "测试中…" }));
+    setTestTitle((m) => ({ ...m, [id]: "" }));
     try {
       const r = await testChannel(id);
-      setTestMsg((m) => ({ ...m, [id]: r.ok ? `✅ ${r.message}` : `❌ ${r.message}` }));
+      if (r.ok) {
+        // 成功：只展示结果 + 延迟（完整信息放悬停）
+        setTestTitle((m) => ({ ...m, [id]: r.message }));
+        setTestMsg((m) => ({ ...m, [id]: `✅ 连接正常 · ${r.latencyMs ?? "-"} ms` }));
+      } else {
+        // 失败：结果 + 错误码（HTTP 状态码 / 网络 / 解析 / 配置）
+        setTestTitle((m) => ({ ...m, [id]: r.message }));
+        setTestMsg((m) => ({ ...m, [id]: `❌ ${r.code ?? "测试失败"}` }));
+      }
     } catch (e) {
-      setTestMsg((m) => ({ ...m, [id]: `❌ ${e instanceof Error ? e.message : String(e)}` }));
+      const msg = e instanceof Error ? e.message : String(e);
+      setTestTitle((m) => ({ ...m, [id]: msg }));
+      setTestMsg((m) => ({ ...m, [id]: "❌ 测试失败" }));
     }
   };
 
@@ -438,7 +451,11 @@ export function Channels() {
                 </td>
                 <td className="px-3 py-2 text-muted">
                   {c.latencyMs ? `${c.latencyMs} ms` : "—"}
-                  {testMsg[c.id] && <span className="block text-xs text-accent">{testMsg[c.id]}</span>}
+                  {testMsg[c.id] && (
+                    <span className="block max-w-48 truncate text-xs text-accent" title={testTitle[c.id] || undefined}>
+                      {testMsg[c.id]}
+                    </span>
+                  )}
                 </td>
                 <td className="px-3 py-2">
                   <div className="flex justify-end gap-1">

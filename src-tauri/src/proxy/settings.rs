@@ -13,6 +13,8 @@ pub(crate) struct ProxySettings {
     pub(crate) security_enabled: bool,
     /// replace（脱敏后转发，默认）| block（高风险拦截）
     pub(crate) security_mode: String,
+    /// 是否记录请求/响应内容明细（request_details 表；关闭则只记概要列）
+    pub(crate) log_content_enabled: bool,
 }
 
 impl Default for ProxySettings {
@@ -23,13 +25,14 @@ impl Default for ProxySettings {
             failover_max_attempts: 3,
             security_enabled: true,
             security_mode: "replace".to_string(),
+            log_content_enabled: true,
         }
     }
 }
 
 pub(crate) async fn read_settings(pool: &SqlitePool) -> ProxySettings {
     let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT key, value FROM settings WHERE key IN ('server.enabled','server.port','failover.enabled','failover.max_attempts','security.enabled','security.mode')",
+        "SELECT key, value FROM settings WHERE key IN ('server.enabled','server.port','failover.enabled','failover.max_attempts','security.enabled','security.mode','log.content_enabled')",
     )
     .fetch_all(pool)
     .await
@@ -53,6 +56,9 @@ pub(crate) async fn read_settings(pool: &SqlitePool) -> ProxySettings {
         if v == "block" || v == "replace" {
             s.security_mode = v.clone();
         }
+    }
+    if let Some(v) = map.get("log.content_enabled") {
+        s.log_content_enabled = v == "true";
     }
     s
 }

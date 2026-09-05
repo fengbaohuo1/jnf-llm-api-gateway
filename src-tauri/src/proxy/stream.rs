@@ -13,21 +13,25 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
 
 use crate::commands::requests::log_request;
+use crate::commands::requests::{RequestDetailInput, RequestLogInput};
 use crate::scheduler::ChannelChoice;
 use crate::security::leak::check_leak;
 use crate::security::{decide, Finding, PolicyDecision, RiskLevel, SecurityScanner};
 
 use super::forward::{compute_cost, extract_usage, UsageTokens};
 use super::handlers::record_security_logs;
+use super::protocol::{self, ClientProtocol, StreamTranslator};
 use super::{PreparedRequest, ProxyState};
 
-/// SSE 透传：后台任务读取上游字节流 → 行缓冲 → 统计/脱敏 → 转发给客户端；流结束记账
+/// SSE 透传：后台任务读取上游字节流 → 行缓冲 → 统计/脱敏 → 按客户端协议翻译 → 转发；流结束记账
 pub(crate) async fn stream_response(
     state: &ProxyState,
     upstream: reqwest::Response,
     channel: &ChannelChoice,
     prepared: &PreparedRequest,
-    started: Instant,
+    started: std::time::Instant,
+    proto: ClientProtocol,
+    attempts: i64,
 ) -> Response {
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(32);
 
@@ -36,18 +40,13 @@ pub(crate) async fn stream_response(
         state.scanner.clone(),
         &channel.id,
         &channel.name,
-        &prepared.auth.id,
-        &prepared.auth.name,
-        &prepared.model,
+        prepared,
         channel.price_per_1k_tokens,
         channel.cache_price_per_1k_tokens,
         channel.reasoning_price_per_1k_tokens,
-        prepared.settings.security_enabled,
-        &prepared.settings.security_mode,
-        prepared.request_findings.clone(),
-        prepared.request_secrets.clone(),
-        prepared.prompt_chars,
         started,
+        proto,
+        attempts,
     );
 
     tokio::spawn(async move {
@@ -106,7 +105,7 @@ impl SseLineSplitter {
     }
 }
 
-/// 流式统计器：token 统计（精确 usage 优先，估算兜底）+ 响应侧脱敏 + 流结束记账
+/// 流式统计器：token 统计（精确 usage 优先，估算兜底）+ 响应侧脱敏 + 协议翻译 + 流结束记账
 struct StreamStats {
     pool: SqlitePool,
     scanner: Arc<dyn SecurityScanner>,
@@ -129,6 +128,18 @@ struct StreamStats {
     response_findings: Vec<Finding>,
     started: Instant,
     finished: bool,
+    /// 客户端协议；OpenAI 时无翻译器（透传），Anthropic/Responses 时逐事件翻译
+    proto: ClientProtocol,
+    translator: Option<StreamTranslator>,
+    // ---- 内容记录（0010）----
+    /// 客户端 UA / 本次尝试序号
+    client_ua: String,
+    attempts: i64,
+    /// 收到的原始请求（脱敏后）与转发体（脱敏后）
+    request_body: Option<String>,
+    upstream_body: Option<String>,
+    /// 流式响应重建器（把 SSE delta 拼回完整响应 JSON 供落库）
+    rebuild: Option<SseRebuilder>,
 }
 
 impl StreamStats {
@@ -138,61 +149,83 @@ impl StreamStats {
         scanner: Arc<dyn SecurityScanner>,
         channel_id: &str,
         channel_name: &str,
-        key_id: &str,
-        key_name: &str,
-        model: &str,
+        prepared: &PreparedRequest,
         price: f64,
         cache_price: f64,
         reasoning_price: f64,
-        security_enabled: bool,
-        security_mode: &str,
-        request_findings: Vec<Finding>,
-        request_secrets: Vec<String>,
-        prompt_chars: (u64, u64),
         started: Instant,
+        proto: ClientProtocol,
+        attempts: i64,
     ) -> Self {
+        // 非 OpenAI 协议：为 message_start / response.created 准备 input_tokens（估算）
+        let translator = match proto {
+            ClientProtocol::OpenAi => None,
+            p => {
+                let input_tokens = estimate_tokens(prepared.prompt_chars.0, prepared.prompt_chars.1);
+                Some(StreamTranslator::new(p, &prepared.model, input_tokens))
+            }
+        };
         Self {
             pool,
             scanner,
             channel_id: channel_id.to_string(),
             channel_name: channel_name.to_string(),
-            key_id: key_id.to_string(),
-            key_name: key_name.to_string(),
-            model: model.to_string(),
+            key_id: prepared.auth.id.clone(),
+            key_name: prepared.auth.name.clone(),
+            model: prepared.model.clone(),
             price,
             cache_price,
             reasoning_price,
-            security_enabled,
-            security_mode: security_mode.to_string(),
-            request_findings,
-            request_secrets,
-            prompt_chars,
+            security_enabled: prepared.settings.security_enabled,
+            security_mode: prepared.settings.security_mode.clone(),
+            request_findings: prepared.request_findings.clone(),
+            request_secrets: prepared.request_secrets.clone(),
+            prompt_chars: prepared.prompt_chars,
             completion_chars: (0, 0),
             exact_usage: None,
             response_findings: Vec::new(),
             started,
             finished: false,
+            proto,
+            translator,
+            client_ua: prepared.client_ua.clone(),
+            attempts,
+            request_body: prepared.request_body.clone(),
+            upstream_body: prepared.upstream_body.clone(),
+            rebuild: if prepared.settings.log_content_enabled {
+                Some(SseRebuilder::default())
+            } else {
+                None
+            },
         }
     }
 
-    /// 处理一个上游 chunk：解析 SSE 行、统计 token、脱敏 delta 内容。
-    /// 返回 (透传字节, 是否继续流)；安全拦截时向客户端注入 error 事件并返回 keep=false。
+    /// 处理一个上游 chunk：解析 SSE 行、统计 token、脱敏 delta 内容、按协议翻译。
+    /// 返回 (透传字节, 是否继续流)；安全拦截时向客户端注入协议 error 事件并返回 keep=false。
     async fn process(&mut self, bytes: &[u8], splitter: &mut SseLineSplitter) -> (Bytes, bool) {
         let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
         for line in splitter.feed(bytes) {
             let Some(payload) = line.strip_prefix(b"data: ") else {
-                // event: / id: / 空行等非 data 行原样透传
-                out.extend_from_slice(&line);
+                // 非 data 行：OpenAI 透传；其他协议丢弃（客户端不认上游的 event: 行）
+                if self.proto == ClientProtocol::OpenAi {
+                    out.extend_from_slice(&line);
+                }
                 continue;
             };
             if payload.trim_ascii() == b"[DONE]" {
-                out.extend_from_slice(&line);
+                if self.proto == ClientProtocol::OpenAi {
+                    out.extend_from_slice(&line);
+                } else if let Some(t) = &mut self.translator {
+                    out.extend_from_slice(&t.on_done());
+                }
                 continue;
             }
             let mut event: Value = match serde_json::from_slice(payload) {
                 Ok(v) => v,
                 Err(_) => {
-                    out.extend_from_slice(&line);
+                    if self.proto == ClientProtocol::OpenAi {
+                        out.extend_from_slice(&line);
+                    }
                     continue;
                 }
             };
@@ -217,9 +250,14 @@ impl StreamStats {
                             self.response_findings.push(leak);
                         }
                         if blocked {
-                            out.extend_from_slice(
-                                "event: error\ndata: {\"error\":{\"message\":\"安全策略拦截：响应包含高风险内容，已中断\",\"type\":\"invalid_response\",\"code\":\"response_security_blocked\"}}\n\n".as_bytes(),
-                            );
+                            match &self.translator {
+                                Some(t) => out.extend_from_slice(&t.error_event(
+                                    "安全策略拦截：响应包含高风险内容，已中断",
+                                )),
+                                None => out.extend_from_slice(&protocol::openai_error_event(
+                                    "安全策略拦截：响应包含高风险内容，已中断",
+                                )),
+                            }
                             return (Bytes::from(out), false);
                         }
                         *s = result.sanitized;
@@ -227,9 +265,22 @@ impl StreamStats {
                 }
             }
 
-            out.extend_from_slice(b"data: ");
-            out.extend_from_slice(serde_json::to_string(&event).unwrap_or_default().as_bytes());
-            out.push(b'\n');
+            // 内容记录：把脱敏后的上游事件喂给重建器（客户端协议无关——上游恒为 OpenAI 格式）
+            if let Some(rebuild) = &mut self.rebuild {
+                rebuild.feed(&event);
+            }
+
+            // 输出：OpenAI 原样透传；其他协议经翻译器逐事件转换
+            match &mut self.translator {
+                None => {
+                    out.extend_from_slice(b"data: ");
+                    out.extend_from_slice(serde_json::to_string(&event).unwrap_or_default().as_bytes());
+                    out.push(b'\n');
+                }
+                Some(t) => {
+                    out.extend_from_slice(&t.on_event(&event));
+                }
+            }
         }
         (Bytes::from(out), true)
     }
@@ -260,29 +311,186 @@ impl StreamStats {
         };
         let cost = compute_cost(tokens, self.price, self.cache_price, self.reasoning_price);
         let latency = self.started.elapsed().as_millis() as i64;
-        match log_request(
-            &self.pool,
-            &self.channel_id,
-            &self.channel_name,
-            Some(&self.key_id),
-            Some(&self.key_name),
-            &self.model,
+        // 内容明细：重建的完整响应（无内容则 None）
+        let response_body = self
+            .rebuild
+            .as_mut()
+            .and_then(|r| r.build())
+            .map(crate::proxy::handlers::clamp_json_body);
+        let details = if self.request_body.is_some() || self.upstream_body.is_some() || response_body.is_some() {
+            Some(RequestDetailInput {
+                request_body: self.request_body.as_deref(),
+                upstream_body: self.upstream_body.as_deref(),
+                response_body: response_body.as_deref(),
+                error_body: None,
+            })
+        } else {
+            None
+        };
+        let input = RequestLogInput {
+            channel_id: Some(&self.channel_id),
+            channel_name: Some(&self.channel_name),
+            key_id: Some(&self.key_id),
+            key_name: Some(&self.key_name),
+            model: &self.model,
             status,
-            latency,
-            tokens.prompt,
-            tokens.completion,
-            tokens.cache_hit,
-            tokens.reasoning,
+            latency_ms: latency,
+            prompt_tokens: tokens.prompt,
+            completion_tokens: tokens.completion,
+            cache_hit_tokens: tokens.cache_hit,
+            reasoning_tokens: tokens.reasoning,
             cost,
-            error.as_deref(),
-        )
-        .await
-        {
+            error: error.as_deref(),
+            protocol: self.proto.as_str(),
+            stream: true,
+            client_ua: &self.client_ua,
+            attempts: self.attempts,
+            details,
+        };
+        match log_request(&self.pool, &input).await {
             Ok(req_id) => {
                 record_security_logs(&self.pool, &req_id, &self.request_findings, &self.response_findings).await;
             }
             Err(e) => eprintln!("[proxy] 流式记账失败: {e}"),
         }
+    }
+}
+
+// ---------------- 流式响应重建（内容记录用） ----------------
+
+/// 把上游 OpenAI 格式的 SSE delta 事件拼回一条完整的 chat.completion 响应 JSON。
+/// 支持多 choice 与工具调用（tool_calls 按 index 分片累积）。
+#[derive(Default)]
+struct SseRebuilder {
+    id: Option<String>,
+    created: Option<i64>,
+    model: Option<String>,
+    choices: Vec<RebuiltChoice>,
+    usage: Option<Value>,
+}
+
+#[derive(Default)]
+struct RebuiltChoice {
+    index: i64,
+    content: String,
+    tool_calls: Vec<RebuiltToolCall>,
+    finish_reason: Option<String>,
+}
+
+#[derive(Default)]
+struct RebuiltToolCall {
+    index: i64,
+    id: Option<String>,
+    name: Option<String>,
+    arguments: String,
+}
+
+impl SseRebuilder {
+    /// 喂入一个上游 data 事件（已脱敏），提取并拼接内容
+    fn feed(&mut self, event: &Value) {
+        if self.id.is_none() {
+            if let Some(id) = event.get("id").and_then(|v| v.as_str()) {
+                self.id = Some(id.to_string());
+            }
+            if let Some(m) = event.get("model").and_then(|v| v.as_str()) {
+                self.model = Some(m.to_string());
+            }
+            if let Some(c) = event.get("created").and_then(|v| v.as_i64()) {
+                self.created = Some(c);
+            }
+        }
+        // usage（include_usage 时流尾独立事件）
+        if let Some(u) = event.get("usage") {
+            self.usage = Some(u.clone());
+        }
+        let Some(choices) = event.get("choices").and_then(|v| v.as_array()) else {
+            return;
+        };
+        for c in choices {
+            let idx = c.get("index").and_then(|v| v.as_i64()).unwrap_or(0);
+            if !self.choices.iter().any(|x| x.index == idx) {
+                self.choices.push(RebuiltChoice { index: idx, ..Default::default() });
+            }
+            let acc = self.choices.iter_mut().find(|x| x.index == idx).expect("存在");
+            // 文本增量
+            if let Some(text) = c
+                .pointer("/delta/content")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+            {
+                acc.content.push_str(text);
+            }
+            // 工具调用增量（按调用 index 分片）
+            if let Some(tcs) = c.pointer("/delta/tool_calls").and_then(|v| v.as_array()) {
+                for tc in tcs {
+                    let t_idx = tc.get("index").and_then(|v| v.as_i64()).unwrap_or(0);
+                    if !acc.tool_calls.iter().any(|t| t.index == t_idx) {
+                        acc.tool_calls.push(RebuiltToolCall { index: t_idx, ..Default::default() });
+                    }
+                    let t = acc.tool_calls.iter_mut().find(|t| t.index == t_idx).expect("存在");
+                    if let Some(id) = tc.get("id").and_then(|v| v.as_str()) {
+                        t.id = Some(id.to_string());
+                    }
+                    if let Some(name) = tc.pointer("/function/name").and_then(|v| v.as_str()) {
+                        t.name = Some(name.to_string());
+                    }
+                    if let Some(args) = tc.pointer("/function/arguments").and_then(|v| v.as_str()) {
+                        t.arguments.push_str(args);
+                    }
+                }
+            }
+            // 结束原因（最后一个非 null 值）
+            if let Some(fr) = c.get("finish_reason").and_then(|v| v.as_str()) {
+                acc.finish_reason = Some(fr.to_string());
+            }
+        }
+    }
+
+    /// 拼成完整响应 JSON（无任何内容时返回 None）
+    fn build(&self) -> Option<String> {
+        if self.choices.is_empty() && self.usage.is_none() {
+            return None;
+        }
+        let choices: Vec<Value> = self
+            .choices
+            .iter()
+            .map(|c| {
+                let tool_calls: Vec<Value> = c
+                    .tool_calls
+                    .iter()
+                    .map(|t| {
+                        serde_json::json!({
+                            "id": t.id.clone().unwrap_or_default(),
+                            "type": "function",
+                            "function": {
+                                "name": t.name.clone().unwrap_or_default(),
+                                "arguments": t.arguments,
+                            }
+                        })
+                    })
+                    .collect();
+                let mut message = serde_json::json!({ "role": "assistant", "content": c.content });
+                if !tool_calls.is_empty() {
+                    message["tool_calls"] = Value::Array(tool_calls);
+                }
+                let mut choice = serde_json::json!({ "index": c.index, "message": message });
+                if let Some(fr) = &c.finish_reason {
+                    choice["finish_reason"] = Value::String(fr.clone());
+                }
+                choice
+            })
+            .collect();
+        let mut body = serde_json::json!({
+            "id": self.id.clone().unwrap_or_default(),
+            "object": "chat.completion",
+            "created": self.created.unwrap_or(0),
+            "model": self.model.clone().unwrap_or_default(),
+            "choices": choices,
+        });
+        if let Some(u) = &self.usage {
+            body["usage"] = u.clone();
+        }
+        Some(serde_json::to_string(&body).unwrap_or_default())
     }
 }
 
@@ -339,23 +547,34 @@ mod tests {
     }
 
     fn stream_stats(pool: SqlitePool, security_mode: &str) -> StreamStats {
+        let mut settings = crate::proxy::settings::ProxySettings::default();
+        settings.security_enabled = true;
+        settings.security_mode = security_mode.to_string();
+        let prepared = PreparedRequest {
+            auth: crate::proxy::auth::AuthKey { id: "k1".into(), name: "测试密钥".into() },
+            settings,
+            body: serde_json::json!({}),
+            model: "gpt-4o".into(),
+            queue: vec![],
+            request_findings: vec![],
+            request_secrets: vec![],
+            prompt_chars: (0, 0),
+            client_ua: String::new(),
+            request_body: None,
+            upstream_body: None,
+        };
         StreamStats::new(
             pool,
             Arc::new(RuleScanner::new()),
             "c1",
             "测试渠道",
-            "k1",
-            "测试密钥",
-            "gpt-4o",
+            &prepared,
             0.0,
             0.0,
             0.0,
-            true,
-            security_mode,
-            vec![],
-            vec![],
-            (0, 0),
             Instant::now(),
+            ClientProtocol::OpenAi,
+            1,
         )
     }
 
@@ -446,5 +665,73 @@ mod tests {
         let out_str = String::from_utf8_lossy(&out).to_string();
         assert!(out_str.contains("今天天气不错"));
         assert!(stats.response_findings.is_empty());
+    }
+
+    // ---- SseRebuilder ----
+
+    #[test]
+    fn rebuilder_reconstructs_full_response_with_tools() {
+        let mut r = SseRebuilder::default();
+        // 首 chunk：id/model/created + role + 文本开头
+        r.feed(&serde_json::json!({
+            "id": "chatcmpl-abc",
+            "object": "chat.completion.chunk",
+            "created": 1710000000,
+            "model": "gpt-4o",
+            "choices": [{"index": 0, "delta": {"role": "assistant", "content": "你好"}, "finish_reason": null}]
+        }));
+        // 文本续段
+        r.feed(&serde_json::json!({
+            "choices": [{"index": 0, "delta": {"content": "，世界"}, "finish_reason": null}]
+        }));
+        // 工具调用分片（index=0 调用：id/name 首段）
+        r.feed(&serde_json::json!({
+            "choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, "id": "call_x", "type": "function", "function": {"name": "get_weather", "arguments": "{\"city\":"}}]}, "finish_reason": null}]
+        }));
+        // 工具调用 arguments 续片 + 结束原因
+        r.feed(&serde_json::json!({
+            "choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "\"北京\"}"}}]}, "finish_reason": "tool_calls"}]
+        }));
+        // usage 事件
+        r.feed(&serde_json::json!({
+            "choices": [],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        }));
+
+        let json = r.build().expect("应有重建内容");
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["id"], "chatcmpl-abc");
+        assert_eq!(v["model"], "gpt-4o");
+        assert_eq!(v["choices"][0]["message"]["role"], "assistant");
+        assert_eq!(v["choices"][0]["message"]["content"], "你好，世界");
+        assert_eq!(v["choices"][0]["finish_reason"], "tool_calls");
+        assert_eq!(v["choices"][0]["message"]["tool_calls"][0]["id"], "call_x");
+        assert_eq!(
+            v["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"],
+            "{\"city\":\"北京\"}"
+        );
+        assert_eq!(v["usage"]["total_tokens"], 15);
+    }
+
+    #[test]
+    fn rebuilder_empty_stream_yields_none() {
+        let r = SseRebuilder::default();
+        assert!(r.build().is_none());
+    }
+
+    #[test]
+    fn rebuilder_skips_empty_content_deltas() {
+        let mut r = SseRebuilder::default();
+        // 上游首 chunk 常带 content:""，不应影响重建（空增量跳过）
+        r.feed(&serde_json::json!({
+            "choices": [{"index": 0, "delta": {"content": ""}, "finish_reason": null}]
+        }));
+        r.feed(&serde_json::json!({
+            "choices": [{"index": 0, "delta": {"content": "结果"}, "finish_reason": "stop"}]
+        }));
+        let json = r.build().expect("应有重建内容");
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["choices"][0]["message"]["content"], "结果");
+        assert_eq!(v["choices"][0]["finish_reason"], "stop");
     }
 }
