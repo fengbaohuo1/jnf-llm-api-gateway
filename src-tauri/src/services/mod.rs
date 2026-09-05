@@ -22,8 +22,10 @@
 //!   [`Service::default_enabled`]；装配发生在启动阶段（`start`），开关改动在下次启动
 //!   或调用 `apply_enabled` 时生效。
 //! - **失败隔离**：某服务 init 失败只记录并跳过，不阻塞其它服务与应用启动。
-//! - **服务自身 schema**：由服务在 `init` 中幂等自建（CREATE TABLE IF NOT EXISTS），
-//!   不进入中央 `migrations/` 目录，框架不感知服务内部结构。
+//! - **服务 schema 版本化**：服务通过 [`Service::schema_versions`] 声明自己的 SQL
+//!   迁移（版本名 + 语句数组），框架用 `service_schema` 表记录已应用版本，只执行
+//!   未应用部分并包在单个事务内（失败整体回滚、服务置 failed）。服务 schema 不
+//!   进入中央 `migrations/` 目录，框架不感知服务内部结构，但演进受版本保护。
 //! - **受管资源**：服务只能通过 [`ServiceContext`] 使用资源（当前为连接池；审计/设置/
 //!   call_llm 等横切句柄后续在此追加）——这是服务无法绕过核心横切能力的保证。
 //!
@@ -58,7 +60,13 @@ pub trait Service: Send + Sync {
     fn default_enabled(&self) -> bool {
         true
     }
-    /// 启动装配/热启用/热重启时调用：幂等建表 / 预热 / 自检。
+    /// 服务级 schema 迁移：`(版本名, SQL 语句数组)`，按声明顺序执行；已应用版本
+    /// 由框架记录于 `service_schema` 表并跳过，未应用部分在单个事务内执行
+    /// （失败整体回滚，服务置 failed）。默认无。
+    fn schema_versions(&self) -> &'static [(&'static str, &'static [&'static str])] {
+        &[]
+    }
+    /// 启动装配/热启用/热重启时调用（schema 应用之后）：预热 / 自检。
     /// Err 仅记录并置本服务为 failed，不阻塞其它服务。
     async fn init(&self, ctx: &ServiceContext) -> Result<(), String>;
 }
@@ -247,19 +255,81 @@ impl ServiceRegistry {
             .ok_or_else(|| format!("服务 {id} 不存在"))
     }
 
-    /// 执行一次 init 并更新状态（锁外 await，避免持锁跨 await）。
+    /// 执行一次服务准备（schema 迁移 + init）并更新状态（锁外 await，避免持锁跨 await）。
     async fn init_one(&self, idx: usize) -> Result<(), String> {
         let svc = self.svc_at(idx);
-        let result = svc
-            .init(&ServiceContext {
-                pool: self.pool.clone(),
-            })
-            .await;
+        let result = match self.apply_schema(svc.as_ref()).await {
+            Ok(()) => svc
+                .init(&ServiceContext {
+                    pool: self.pool.clone(),
+                })
+                .await,
+            Err(e) => Err(e),
+        };
         match &result {
             Ok(()) => self.set_state(idx, RuntimeState::Running),
             Err(e) => self.set_state(idx, RuntimeState::Failed(e.clone())),
         }
         result
+    }
+
+    /// 服务级 schema 迁移：先建框架的 `service_schema` 记录表，找出未应用版本，
+    /// 逐版本在单事务内执行全部语句并写记录；任一步失败整体回滚并返回错误。
+    async fn apply_schema(&self, svc: &dyn Service) -> Result<(), String> {
+        let versions = svc.schema_versions();
+        if versions.is_empty() {
+            return Ok(());
+        }
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS service_schema (
+                id TEXT NOT NULL,
+                version TEXT NOT NULL,
+                applied_at TEXT NOT NULL,
+                PRIMARY KEY (id, version)
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("创建 service_schema 表失败: {e}"))?;
+
+        let id = svc.id();
+        let mut pending: Vec<(&'static str, &'static [&'static str])> = Vec::new();
+        for &(ver, _stmts) in versions {
+            let applied: Option<String> = sqlx::query_scalar(
+                "SELECT version FROM service_schema WHERE id = ?1 AND version = ?2",
+            )
+            .bind(id)
+            .bind(ver)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+            if applied.is_none() {
+                pending.push((ver, _stmts));
+            }
+        }
+        if pending.is_empty() {
+            return Ok(());
+        }
+
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        for (ver, stmts) in pending {
+            for sql in stmts {
+                sqlx::query(sql)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| format!("服务 {id} schema 版本 {ver} 执行失败（已回滚）: {e}"))?;
+            }
+            sqlx::query(
+                "INSERT INTO service_schema (id, version, applied_at) VALUES (?1, ?2, ?3)",
+            )
+            .bind(id)
+            .bind(ver)
+            .bind(crate::commands::util::now_iso())
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("服务 {id} schema 版本 {ver} 记录失败（已回滚）: {e}"))?;
+        }
+        tx.commit().await.map_err(|e| e.to_string())
     }
 
     /// 更新第 i 个服务的状态。
@@ -532,5 +602,128 @@ mod tests {
         reg.apply_enabled("kb", false).await.unwrap();
         let err = reg.restart("kb").await.unwrap_err();
         assert!(err.contains("已停用"), "停用服务不应允许重启: {err}");
+    }
+
+    /// 测试用带 schema 的服务（两个版本）
+    struct SchemaService(&'static str);
+
+    #[async_trait::async_trait]
+    impl Service for SchemaService {
+        fn id(&self) -> &'static str {
+            self.0
+        }
+        fn name(&self) -> &'static str {
+            self.0
+        }
+        fn description(&self) -> &'static str {
+            "test"
+        }
+        fn schema_versions(&self) -> &'static [(&'static str, &'static [&'static str])] {
+            &[
+                (
+                    "0001",
+                    &["CREATE TABLE s_t1 (a TEXT NOT NULL)"],
+                ),
+                (
+                    "0002",
+                    &[
+                        "CREATE TABLE s_t2 (a TEXT NOT NULL)",
+                        "INSERT INTO s_t2 (a) VALUES ('x')",
+                    ],
+                ),
+            ]
+        }
+        async fn init(&self, _ctx: &ServiceContext) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    /// 测试用 schema 中途失败的坏服务（版本内第二条 SQL 非法）
+    struct BadSchemaService(&'static str);
+
+    #[async_trait::async_trait]
+    impl Service for BadSchemaService {
+        fn id(&self) -> &'static str {
+            self.0
+        }
+        fn name(&self) -> &'static str {
+            self.0
+        }
+        fn description(&self) -> &'static str {
+            "test"
+        }
+        fn schema_versions(&self) -> &'static [(&'static str, &'static [&'static str])] {
+            &[(
+                "0001",
+                &[
+                    "CREATE TABLE b_t (a TEXT NOT NULL)",
+                    "INSERT INTO b_t (a) VALUES ('ok')",
+                    "THIS IS NOT SQL",
+                ],
+            )]
+        }
+        async fn init(&self, _ctx: &ServiceContext) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn schema_bootstraps_once_and_skips_on_restart() {
+        let pool = test_pool(false).await;
+        let reg = ServiceRegistry::from_services(pool, vec![Box::new(SchemaService("schema"))]);
+        let boots = reg.start().await;
+        assert!(boots[0].ok, "schema 应用后 init 应成功");
+
+        // 两张表已建、数据已插、版本已记录
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM s_t2")
+            .fetch_one(&reg.pool)
+            .await
+            .unwrap();
+        assert_eq!(n, 1);
+        let versions: Vec<String> =
+            sqlx::query_scalar("SELECT version FROM service_schema WHERE id = 'schema' ORDER BY version")
+                .fetch_all(&reg.pool)
+                .await
+                .unwrap();
+        assert_eq!(versions, vec!["0001".to_string(), "0002".to_string()]);
+
+        // 热重启：已应用版本跳过，不重复执行（数据不翻倍）
+        reg.restart("schema").await.unwrap();
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM s_t2")
+            .fetch_one(&reg.pool)
+            .await
+            .unwrap();
+        assert_eq!(n, 1, "schema 不应重复执行");
+    }
+
+    #[tokio::test]
+    async fn schema_failure_rolls_back_and_fails_service() {
+        let pool = test_pool(false).await;
+        let reg = ServiceRegistry::from_services(
+            pool,
+            vec![Box::new(BadSchemaService("badschema"))],
+        );
+        let boots = reg.start().await;
+        assert!(!boots[0].ok);
+        let err = boots[0].error.as_deref().unwrap_or_default();
+        assert!(err.contains("0001") && err.contains("回滚"), "错误应含版本与回滚信息: {err}");
+
+        // 整个版本事务回滚：DDL 也不残留，版本未记录
+        let info = reg.list();
+        assert_eq!(info[0].status, "failed");
+        let tbl: Option<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'b_t'",
+        )
+        .fetch_optional(&reg.pool)
+        .await
+        .unwrap();
+        assert!(tbl.is_none(), "失败版本的表应随事务回滚消失");
+        let v: Option<String> = sqlx::query_scalar(
+            "SELECT version FROM service_schema WHERE id = 'badschema'",
+        )
+        .fetch_optional(&reg.pool)
+        .await
+        .unwrap();
+        assert!(v.is_none());
     }
 }

@@ -211,6 +211,16 @@ pub fn run() {
             commands::services::list_services,
             commands::services::set_service_enabled,
             commands::services::restart_service,
+            // knowledge base（数据模型 / CRUD / 导入）
+            commands::kb::kb_list_bases,
+            commands::kb::kb_create_base,
+            commands::kb::kb_update_base,
+            commands::kb::kb_delete_base,
+            commands::kb::kb_list_documents,
+            commands::kb::kb_import_text,
+            commands::kb::kb_import_file,
+            commands::kb::kb_delete_document,
+            commands::kb::kb_list_chunks,
             // daily stats
             commands::stats::list_daily_stats,
             commands::stats::today_stats,
