@@ -108,3 +108,15 @@ export interface AdminAudit {
   detail: string | null;
   createdAt: string;
 }
+
+/** 扩展服务运行时状态（list_services 命令返回） */
+export type ServiceStatus = "running" | "failed" | "disabled";
+
+export interface ServiceInfo {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  status: ServiceStatus;
+  error: string | null;
+}

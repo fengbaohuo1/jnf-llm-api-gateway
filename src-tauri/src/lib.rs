@@ -6,6 +6,7 @@ mod models;
 mod proxy;
 mod scheduler;
 mod security;
+mod services;
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -69,6 +70,27 @@ pub fn run() {
                 tauri::async_runtime::block_on(config::dump_settings_file(&pool, &dir));
             }
             app.manage(DbState(pool.clone()));
+
+            // 扩展服务注册表：装配（开关 services.<id>.enabled，存 settings /
+            // settings.json 双写）后由 AppState 托管——保留活实例与运行时状态，
+            // 命令可热启停/重启/查询（见 commands::services）。
+            let registry = services::ServiceRegistry::new(pool.clone());
+            let boots = tauri::async_runtime::block_on(registry.start());
+            for b in &boots {
+                if !b.enabled {
+                    eprintln!("[services] {}（{}）已停用，跳过装配", b.name, b.id);
+                } else if b.ok {
+                    eprintln!("[services] {}（{}）装配完成", b.name, b.id);
+                } else {
+                    eprintln!(
+                        "[services] {}（{}）装配失败: {}，已跳过（不影响应用启动）",
+                        b.name,
+                        b.id,
+                        b.error.as_deref().unwrap_or("未知错误")
+                    );
+                }
+            }
+            app.manage(registry);
 
             // 关闭到托盘开关（从设置读取，set_setting 时同步更新）
             let close_to_tray = tauri::async_runtime::block_on(async {
@@ -185,6 +207,10 @@ pub fn run() {
             commands::settings::get_setting,
             commands::settings::reload_settings_file,
             commands::settings::settings_file_info,
+            // services（扩展服务状态管理）
+            commands::services::list_services,
+            commands::services::set_service_enabled,
+            commands::services::restart_service,
             // daily stats
             commands::stats::list_daily_stats,
             commands::stats::today_stats,

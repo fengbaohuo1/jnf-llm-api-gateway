@@ -2,6 +2,7 @@ pub mod channels;
 pub mod keys;
 pub mod requests;
 pub mod security;
+pub mod services;
 pub mod settings;
 pub mod stats;
 pub mod util;

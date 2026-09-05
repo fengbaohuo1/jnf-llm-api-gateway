@@ -8,6 +8,7 @@ import type {
   RequestDetail,
   SecurityLog,
   SecurityRule,
+  ServiceInfo,
 } from "../types";
 
 // 后端命令返回的字段是 camelCase；这里映射回前端结构。
@@ -206,6 +207,13 @@ export const api = {
   settingsFileInfo: () =>
     invoke<{ path: string; exists: boolean }>("settings_file_info"),
   reloadSettingsFile: () => invoke<number>("reload_settings_file"),
+
+  // ---- Services（扩展服务状态管理）----
+  // 后端返回字段已是 camelCase，与 ServiceInfo 同构，无需映射
+  listServices: () => invoke<ServiceInfo[]>("list_services"),
+  setServiceEnabled: (id: string, enabled: boolean) =>
+    invoke("set_service_enabled", { id, enabled }),
+  restartService: (id: string) => invoke("restart_service", { id }),
 
   // ---- Daily stats ----
   listDailyStats: (limit: number) =>

@@ -1,12 +1,13 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { PageHeader, Card, Toggle } from "../components/ui";
 import { Button } from "../components/Modal";
 import { api } from "../api";
 import { saveTheme, type ThemePreference } from "../theme";
 import { isEnabled as autoStartEnabled, enable as autoStartEnable, disable as autoStartDisable } from "@tauri-apps/plugin-autostart";
 import { openPath } from "@tauri-apps/plugin-opener";
+import type { ServiceInfo, ServiceStatus } from "../types";
 
-type TabKey = "server" | "proxy" | "general" | "system" | "ui" | "retry" | "failover";
+type TabKey = "server" | "proxy" | "general" | "system" | "ui" | "retry" | "failover" | "services";
 
 const tabs: { key: TabKey; label: string }[] = [
   { key: "server", label: "服务配置" },
@@ -16,6 +17,7 @@ const tabs: { key: TabKey; label: string }[] = [
   { key: "ui", label: "界面设置" },
   { key: "retry", label: "重试策略" },
   { key: "failover", label: "故障转移" },
+  { key: "services", label: "扩展服务" },
 ];
 
 const inputCls =
@@ -384,6 +386,115 @@ function FailoverTab() {
   );
 }
 
+// ---- 扩展服务 ----
+
+const serviceBadge: Record<ServiceStatus, string> = {
+  running:
+    "inline-flex items-center gap-1.5 rounded-md bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 ring-1 ring-green-200 dark:bg-green-950 dark:text-green-300 dark:ring-green-900",
+  failed:
+    "inline-flex items-center gap-1.5 rounded-md bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700 ring-1 ring-red-200 dark:bg-red-950 dark:text-red-300 dark:ring-red-900",
+  disabled:
+    "inline-flex items-center gap-1.5 rounded-md bg-gray-50 px-2 py-0.5 text-xs font-medium text-gray-500 ring-1 ring-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:ring-gray-700",
+};
+const serviceBadgeLabel: Record<ServiceStatus, string> = {
+  running: "运行中",
+  failed: "初始化失败",
+  disabled: "已停用",
+};
+const serviceDot: Record<ServiceStatus, string> = {
+  running: "bg-green-500",
+  failed: "bg-red-500",
+  disabled: "bg-gray-400",
+};
+
+function ServicesTab() {
+  const [services, setServices] = useState<ServiceInfo[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [opError, setOpError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      setServices(await api.listServices());
+      setOpError(null);
+    } catch (e) {
+      setOpError(String(e));
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const run = async (s: ServiceInfo, act: () => Promise<unknown>) => {
+    setBusyId(s.id);
+    setOpError(null);
+    try {
+      await act();
+      await refresh();
+    } catch (e) {
+      setOpError(String(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <Card>
+      <h3 className="mb-2 text-sm font-semibold text-sub">扩展服务</h3>
+      <p className="mb-2 text-xs text-faint">
+        知识库、MCP 等扩展以独立服务注册（services 目录 + 注册表）。开关即时热生效并写入设置（重启应用后保持）；
+        初始化失败可点重试恢复，无需重启应用。
+      </p>
+      <div className="divide-y divide-edge">
+        {services.map((s) => (
+          <div key={s.id} className="flex items-center justify-between gap-4 py-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-medium text-sub">{s.name}</p>
+                <span className={serviceBadge[s.status]}>
+                  <span className={`h-1.5 w-1.5 rounded-full ${serviceDot[s.status]}`} />
+                  {serviceBadgeLabel[s.status]}
+                </span>
+              </div>
+              <p className="mt-0.5 text-xs text-faint">{s.description}</p>
+              {s.status === "failed" && s.error && (
+                <p className="mt-1 truncate text-xs text-red-600 dark:text-red-400" title={s.error}>
+                  失败原因：{s.error}
+                </p>
+              )}
+            </div>
+            <div className="flex shrink-0 items-center gap-3">
+              {s.status === "failed" && (
+                <Button
+                  variant="secondary"
+                  disabled={busyId === s.id}
+                  onClick={() => void run(s, () => api.restartService(s.id))}
+                >
+                  重试
+                </Button>
+              )}
+              <Toggle
+                checked={s.enabled}
+                disabled={busyId === s.id}
+                onChange={(v) => void run(s, () => api.setServiceEnabled(s.id, v))}
+              />
+            </div>
+          </div>
+        ))}
+        {!loaded && <p className="py-3 text-xs text-faint">加载中…</p>}
+        {loaded && services.length === 0 && <p className="py-3 text-xs text-faint">暂无扩展服务</p>}
+      </div>
+      {opError && (
+        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
+          {opError}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export function Settings() {
   const [tab, setTab] = useState<TabKey>("server");
   return (
@@ -409,6 +520,7 @@ export function Settings() {
       {tab === "ui" && <UiTab />}
       {tab === "retry" && <RetryTab />}
       {tab === "failover" && <FailoverTab />}
+      {tab === "services" && <ServicesTab />}
     </div>
   );
 }
