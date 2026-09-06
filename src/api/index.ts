@@ -9,6 +9,16 @@ import type {
   SecurityLog,
   SecurityRule,
   ServiceInfo,
+  KnowledgeBase,
+  KbStatus,
+  KbDocument,
+  KbChunk,
+  KbTask,
+  SearchHit,
+  KbSearchMode,
+  KbSession,
+  KbMessage,
+  ChatReply,
 } from "../types";
 
 // 后端命令返回的字段是 camelCase；这里映射回前端结构。
@@ -219,6 +229,51 @@ export const api = {
   listDailyStats: (limit: number) =>
     invoke<RawDailyStat[]>("list_daily_stats", { limit }),
   todayStats: () => invoke<RawDailyStat>("today_stats"),
+
+  // ---- Knowledge base（检索与 RAG 问答）----
+  // 后端 DTO 已统一 camelCase 输出，与 types 同构，无需映射
+  listBases: () => invoke<KnowledgeBase[]>("kb_list_bases"),
+  createBase: (input: { name: string; description?: string; chunkSize?: number; chunkOverlap?: number }) =>
+    invoke<KnowledgeBase>("kb_create_base", { ...input }),
+  updateBase: (input: {
+    id: string;
+    name?: string;
+    description?: string;
+    chunkSize?: number;
+    chunkOverlap?: number;
+    status?: KbStatus;
+  }) => invoke<KnowledgeBase>("kb_update_base", { ...input }),
+  deleteBase: (id: string) => invoke("kb_delete_base", { id }),
+
+  listDocuments: (kbId: string) => invoke<KbDocument[]>("kb_list_documents", { kbId }),
+  importText: (input: { kbId: string; title: string; format: string; text: string }) =>
+    invoke<KbDocument>("kb_import_text", { ...input }),
+  importFile: (input: { kbId: string; path: string }) =>
+    invoke<KbDocument>("kb_import_file", { ...input }),
+  deleteDocument: (documentId: string) => invoke("kb_delete_document", { documentId }),
+  listChunks: (documentId: string) => invoke<KbChunk[]>("kb_list_chunks", { documentId }),
+
+  bindEmbedding: (input: { kbId: string; channelId: string; model: string }) =>
+    invoke<KnowledgeBase>("kb_bind_embedding", { ...input }),
+  unbindEmbedding: (kbId: string) => invoke<KnowledgeBase>("kb_unbind_embedding", { kbId }),
+  buildIndex: (kbId: string) => invoke<string>("kb_build_index", { kbId }),
+  listTasks: (kbId: string, limit?: number) =>
+    invoke<KbTask[]>("kb_list_tasks", { kbId, limit: limit ?? 20 }),
+
+  search: (input: { kbId: string; query: string; mode?: KbSearchMode; topK?: number }) =>
+    invoke<SearchHit[]>("kb_search", { ...input }),
+
+  bindAnswer: (input: { kbId: string; channelId: string; model?: string }) =>
+    invoke<KnowledgeBase>("kb_bind_answer", { ...input }),
+  unbindAnswer: (kbId: string) => invoke<KnowledgeBase>("kb_unbind_answer", { kbId }),
+
+  createSession: (input: { kbId: string; title?: string }) =>
+    invoke<KbSession>("kb_create_session", { ...input }),
+  listSessions: (kbId: string) => invoke<KbSession[]>("kb_list_sessions", { kbId }),
+  deleteSession: (sessionId: string) => invoke("kb_delete_session", { sessionId }),
+  listMessages: (sessionId: string) => invoke<KbMessage[]>("kb_list_messages", { sessionId }),
+  chat: (input: { sessionId: string; question: string }) =>
+    invoke<ChatReply>("kb_chat", { ...input }),
 };
 
 // ---- raw 类型（与后端 camelCase 对齐）----

@@ -7,6 +7,7 @@ import {
   ScrollText,
   Shield,
   Settings,
+  Database,
 } from "lucide-react";
 
 const navItems = [
@@ -16,6 +17,7 @@ const navItems = [
   { to: "/keys", label: "密钥", icon: KeyRound },
   { to: "/logs", label: "日志", icon: ScrollText },
   { to: "/security", label: "安全", icon: Shield },
+  { to: "/kb", label: "知识库", icon: Database },
   { to: "/settings", label: "设置", icon: Settings },
 ];
 

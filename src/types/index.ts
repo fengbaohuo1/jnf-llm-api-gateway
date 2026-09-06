@@ -120,3 +120,126 @@ export interface ServiceInfo {
   status: ServiceStatus;
   error: string | null;
 }
+
+// ---- Knowledge base（本地知识库：检索与 RAG 问答）----
+
+export type KbStatus = "active" | "disabled";
+/** 向量索引状态机：none（未构建）/ building / ready / failed */
+export type KbIndexStatus = "none" | "building" | "ready" | "failed";
+
+export interface KnowledgeBase {
+  id: string;
+  name: string;
+  description: string;
+  chunkSize: number;
+  chunkOverlap: number;
+  embeddingDim: number;
+  indexStatus: KbIndexStatus;
+  status: KbStatus;
+  /** 绑定 embedding 渠道/模型（语义检索用；未启用时为空） */
+  embeddingModel: string | null;
+  embeddingChannelId: string | null;
+  /** 绑定问答渠道/模型（RAG 回答生成用，与 embedding 解耦） */
+  answerChannelId: string | null;
+  answerModel: string | null;
+  createdAt: string;
+  updatedAt: string;
+  docCount: number;
+}
+
+export type KbDocStatus = "importing" | "ready" | "failed";
+
+export interface KbDocument {
+  id: string;
+  kbId: string;
+  title: string;
+  format: string; // md / txt
+  /** 源文件字节大小（粘贴导入为 0） */
+  fileSize: number;
+  sourceType: string; // paste / upload / ...
+  sourceUrl: string | null;
+  sourcePath: string | null;
+  docMeta: string;
+  fileHash: string;
+  charCount: number;
+  chunkCount: number;
+  status: KbDocStatus;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface KbChunk {
+  id: number;
+  documentId: string;
+  seq: number;
+  /** 章节溯源路径（md 解析：如 "A / B"；txt 为空） */
+  heading: string;
+  content: string;
+  chars: number;
+  metadata: string;
+}
+
+export type KbTaskStatus = "pending" | "running" | "ready" | "failed";
+
+export interface KbTask {
+  id: string;
+  kbId: string;
+  taskType: string;
+  status: KbTaskStatus;
+  totalItems: number;
+  doneItems: number;
+  progress: number;
+  errorMessage: string | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+/** 统一检索命中（keyword bm25 / vector 相似度 / hybrid RRF 融合） */
+export interface SearchHit {
+  chunkId: number;
+  documentId: string;
+  title: string;
+  heading: string;
+  seq: number;
+  content: string;
+  score: number;
+}
+
+export type KbSearchMode = "keyword" | "vector" | "hybrid";
+
+export interface KbSession {
+  id: string;
+  kbId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 引用条目（正文 [n] ↔ 来源一一对应，可跳转到原分块） */
+export interface KbCitation {
+  n: number;
+  chunkId: number;
+  documentId: string;
+  title: string;
+  heading: string;
+}
+
+export interface KbMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  sources: KbCitation[];
+  model: string | null;
+  tokensUsed: number;
+  createdAt: string;
+}
+
+export interface ChatReply {
+  sessionId: string;
+  answer: string;
+  citations: KbCitation[];
+  model: string;
+  tokensUsed: number;
+  latencyMs: number;
+}

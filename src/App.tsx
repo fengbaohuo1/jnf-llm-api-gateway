@@ -7,6 +7,7 @@ import { Keys } from "./pages/Keys";
 import { Logs } from "./pages/Logs";
 import { Security } from "./pages/Security";
 import { Settings } from "./pages/Settings";
+import { KnowledgeBasePage } from "./pages/KnowledgeBase";
 
 function App() {
   return (
@@ -21,6 +22,7 @@ function App() {
             <Route path="/keys" element={<Keys />} />
             <Route path="/logs" element={<Logs />} />
             <Route path="/security" element={<Security />} />
+            <Route path="/kb" element={<KnowledgeBasePage />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
