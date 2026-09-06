@@ -22,7 +22,7 @@ use crate::commands::util::{new_id, now_iso};
 
 use super::data::{self, KbBase};
 use super::search::{self, SearchHit};
-use super::{indexing, KnowledgeBaseService};
+use super::KnowledgeBaseService;
 
 // ---- 常量（上下文组装预算与检索档位）----
 
@@ -41,8 +41,6 @@ const HISTORY_LIMIT: usize = 6;
 const HISTORY_MSG_MAX_CHARS: usize = 2000;
 /// 最终进上下文的命中数
 const RETRIEVAL_TOP_K: usize = 4;
-/// 两路各自先取 top_k 的倍数再融合（融合排名更稳）
-const RRF_FETCH_K: usize = RETRIEVAL_TOP_K * 5; // 20（≤100 档位上限）
 /// 单问字符上限（超出截断）
 const MAX_QUESTION_CHARS: usize = 4096;
 /// 会话自动标题字符上限
@@ -91,6 +89,20 @@ pub struct KbMessage {
 #[serde(rename_all = "camelCase")]
 pub struct ChatReply {
     pub session_id: String,
+    pub answer: String,
+    /// 引用条目（与回答正文 [n] 对应）
+    pub citations: Vec<Citation>,
+    pub model: String,
+    pub tokens_used: i64,
+    /// 本次问答耗时（毫秒）
+    pub latency_ms: u64,
+}
+
+/// 无状态问答结果（MCP 等无会话调用方用；由 [`KnowledgeBaseService::answer`]
+/// 产出，不落库——审计与留痕由调用方负责）
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AskOutcome {
     pub answer: String,
     /// 引用条目（与回答正文 [n] 对应）
     pub citations: Vec<Citation>,
@@ -329,6 +341,16 @@ async fn history_messages(pool: &SqlitePool, session_id: &str) -> Result<Vec<Cha
 
 // ---- 纯函数：标题摘要 / 引用上下文组装 / 用户提示词 ----
 
+/// 问题预处理：去空白 + 超长截断（chat 与 MCP 共用，保证生成与落库内容一致）。
+/// 空问题给出中文错误。
+pub(crate) fn normalize_question(question: &str) -> Result<String, String> {
+    let trimmed = question.trim();
+    if trimmed.is_empty() {
+        return Err("问题不能为空".to_string());
+    }
+    Ok(truncate_chars(trimmed, MAX_QUESTION_CHARS))
+}
+
 /// 首问自动标题：首个非空行，压缩空白并截断
 pub(crate) fn summarize_title(question: &str) -> String {
     let first = question.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
@@ -401,32 +423,83 @@ pub(crate) fn render_user_prompt(context: &[ContextChunk], question: &str) -> St
 // ---- 服务入口：chat ----
 
 impl KnowledgeBaseService {
-    /// RAG 问答（服务入口）。自动策略：embedding 绑定 + 索引 ready → hybrid
-    /// 检索，否则降级关键词；检索内部失败一律降级而非报错。
-    /// 渠道调用成功才落库（user + assistant 同一事务，来源与用量一并记录）。
+    /// RAG 会话问答（服务入口）。检索策略与校验见 [`Self::answer`]；
+    /// **渠道调用成功才落库**（user + assistant 同一事务，来源与用量一并记录）。
     pub async fn chat(
         &self,
         pool: &SqlitePool,
         session_id: &str,
         question: &str,
     ) -> Result<ChatReply, String> {
-        let question = question.trim();
-        if question.is_empty() {
-            return Err("问题不能为空".to_string());
-        }
-        let question = truncate_chars(question, MAX_QUESTION_CHARS);
-
-        // 会话 → 知识库 → 问答绑定
+        let question = normalize_question(question)?;
         let Some(session) = read_session(pool, session_id).await? else {
             return Err("会话不存在".to_string());
         };
-        let Some(base) = data::read_base(pool, &session.kb_id).await? else {
+        // 最近 N 条历史由会话方提供（answer 只负责拼接）
+        let history = history_messages(pool, session_id).await?;
+        let out = self
+            .answer(pool, &session.kb_id, &question, &history)
+            .await?;
+
+        // 成功才落库：user + assistant 同事务；首问自动生成会话标题
+        let sources_json = serde_json::to_string(&out.citations).map_err(|e| e.to_string())?;
+        let now = now_iso();
+        let title = summarize_title(&question);
+        let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+        insert_message(&mut tx, session_id, "user", &question, None, None, 0, &now).await?;
+        insert_message(
+            &mut tx,
+            session_id,
+            "assistant",
+            &out.answer,
+            Some(&sources_json),
+            Some(&out.model),
+            out.tokens_used,
+            &now,
+        )
+        .await?;
+        sqlx::query(
+            "UPDATE kb_sessions SET updated_at=?2, \
+             title = CASE WHEN title = ?3 THEN ?4 ELSE title END WHERE id = ?1",
+        )
+        .bind(session_id)
+        .bind(&now)
+        .bind(DEFAULT_TITLE)
+        .bind(&title)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("更新会话失败: {e}"))?;
+        tx.commit().await.map_err(|e| e.to_string())?;
+
+        Ok(ChatReply {
+            session_id: session_id.to_string(),
+            answer: out.answer,
+            citations: out.citations,
+            model: out.model,
+            tokens_used: out.tokens_used,
+            latency_ms: out.latency_ms,
+        })
+    }
+
+    /// 无状态问答核心（MCP 等调用方与 [`Self::chat`] 共用）：
+    /// 校验库与问答绑定 → 检索（hybrid 自动降级关键词）→ 组装引用上下文与历史
+    /// → 调用问答渠道（temperature 0.2、非流式）。**不落库、不写会话**——
+    /// 留痕由调用方负责（chat 走本方法后落库，MCP 走工具审计）。
+    /// `question` 须已通过 [`normalize_question`]；`history` 已按条截断。
+    pub(crate) async fn answer(
+        &self,
+        pool: &SqlitePool,
+        kb_id: &str,
+        question: &str,
+        history: &[ChatMessage],
+    ) -> Result<AskOutcome, String> {
+        let Some(base) = data::read_base(pool, kb_id).await? else {
             return Err("知识库不存在".to_string());
         };
         if base.status != "active" {
             return Err("知识库已停用，无法问答".to_string());
         }
-        let (channel_id, model) = bound_answer(pool, &session.kb_id).await?;
+        let (channel_id, model) = bound_answer(pool, kb_id).await?;
         let (ctype, base_url, api_key, status): (String, String, String, String) = sqlx::query_as(
             "SELECT type, base_url, api_key_encrypted, status FROM channels WHERE id = ?1",
         )
@@ -442,19 +515,19 @@ impl KnowledgeBaseService {
             .map_err(|e| format!("问答渠道配置错误: {e}"))?;
 
         // 检索上下文（hybrid → 降级关键词）
-        let hits = self.retrieve_for_chat(pool, &session.kb_id, &question).await?;
+        let hits = self.retrieve_for_chat(pool, kb_id, question).await?;
         let context = build_context(&hits, CONTEXT_MAX_CHARS);
 
-        // 组装 messages：system + 会话历史（最近 N 条）+ 当前问题（带引用）
+        // 组装 messages：system + 调用方历史 + 当前问题（带引用）
         let mut messages: Vec<ChatMessage> = Vec::with_capacity(HISTORY_LIMIT + 2);
         messages.push(ChatMessage {
             role: "system".to_string(),
             content: KB_SYSTEM_PROMPT.to_string(),
         });
-        messages.extend(history_messages(pool, session_id).await?);
+        messages.extend(history.iter().cloned());
         messages.push(ChatMessage {
             role: "user".to_string(),
-            content: render_user_prompt(&context, &question),
+            content: render_user_prompt(&context, question),
         });
 
         // 调用问答渠道（非流式）
@@ -483,49 +556,8 @@ impl KnowledgeBaseService {
                 heading: c.hit.heading.clone(),
             })
             .collect();
-        let sources_json = serde_json::to_string(&citations).map_err(|e| e.to_string())?;
 
-        // 成功才落库：user + assistant 同事务；首问自动生成会话标题
-        let now = now_iso();
-        let title = summarize_title(&question);
-        let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-        insert_message(
-            &mut tx,
-            session_id,
-            "user",
-            &question,
-            None,
-            None,
-            0,
-            &now,
-        )
-        .await?;
-        insert_message(
-            &mut tx,
-            session_id,
-            "assistant",
-            &resp.content,
-            Some(&sources_json),
-            Some(&model),
-            tokens_used,
-            &now,
-        )
-        .await?;
-        sqlx::query(
-            "UPDATE kb_sessions SET updated_at=?2, \
-             title = CASE WHEN title = ?3 THEN ?4 ELSE title END WHERE id = ?1",
-        )
-        .bind(session_id)
-        .bind(&now)
-        .bind(DEFAULT_TITLE)
-        .bind(&title)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| format!("更新会话失败: {e}"))?;
-        tx.commit().await.map_err(|e| e.to_string())?;
-
-        Ok(ChatReply {
-            session_id: session_id.to_string(),
+        Ok(AskOutcome {
             answer: resp.content,
             citations,
             model,
@@ -543,40 +575,17 @@ impl KnowledgeBaseService {
         kb_id: &str,
         question: &str,
     ) -> Result<Vec<SearchHit>, String> {
-        match self.hybrid_search(pool, kb_id, question).await {
-            Ok(mut hits) => {
-                hits.truncate(RETRIEVAL_TOP_K);
-                Ok(hits)
-            }
+        match self
+            .search_any(pool, kb_id, question, "hybrid", RETRIEVAL_TOP_K)
+            .await
+        {
+            Ok(hits) => Ok(hits),
             Err(e) => {
                 eprintln!("[kb] 问答 hybrid 检索不可用，降级关键词检索: {e}");
-                let mut hits = search::search_keyword(pool, kb_id, question, RETRIEVAL_TOP_K).await?;
-                hits.truncate(RETRIEVAL_TOP_K);
+                let hits = search::search_keyword(pool, kb_id, question, RETRIEVAL_TOP_K).await?;
                 Ok(hits)
             }
         }
-    }
-
-    /// hybrid 两路检索：任一步失败整体 Err（embedding 渠道不可达 /
-    /// 索引不同步 / 绑定缺失都由调用方降级处理）
-    async fn hybrid_search(
-        &self,
-        pool: &SqlitePool,
-        kb_id: &str,
-        question: &str,
-    ) -> Result<Vec<SearchHit>, String> {
-        let embedder = indexing::build_embedder(pool, kb_id).await?;
-        let vecs = embedder
-            .embed_texts(&[question])
-            .await
-            .map_err(|e| format!("查询向量化失败: {e}"))?;
-        let v = vecs
-            .into_iter()
-            .next()
-            .ok_or("embedding 返回为空，无法向量检索")?;
-        let kw = search::search_keyword(pool, kb_id, question, RRF_FETCH_K).await?;
-        let vec = self.search_vector(pool, kb_id, v, RRF_FETCH_K).await?;
-        Ok(search::rrf_fuse(kw, vec, RRF_FETCH_K))
     }
 }
 
@@ -612,7 +621,7 @@ async fn insert_message(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::kb::{data, embed, schema};
+    use crate::services::kb::{data, embed, indexing, schema};
     use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
     use std::str::FromStr;
     use std::sync::Arc;

@@ -1,15 +1,13 @@
 //! 知识库 Tauri 命令（薄包装层：参数校验与错误透传委托给 kb 数据/服务层）。
 //! 命名 kb_*；参数由 Tauri 自动 camelCase → snake_case。
 
-use std::sync::Arc;
-
 use tauri::State;
 
 use crate::commands::DbState;
 use crate::services::kb::data::{self, KbBase, KbChunk, KbDocument};
-use crate::services::kb::embed::{self, Embedder};
+use crate::services::kb::embed::{self};
 use crate::services::kb::rag::{self, ChatReply, KbMessage, KbSession};
-use crate::services::kb::search::{self, SearchHit};
+use crate::services::kb::search::SearchHit;
 use crate::services::kb::{indexing, KnowledgeBaseService};
 use crate::services::ServiceRegistry;
 
@@ -190,7 +188,8 @@ pub async fn kb_list_tasks(
 }
 
 /// 检索知识库：mode = keyword（FTS5 BM25）| vector（embedding + HNSW）
-/// | hybrid（两路检索 RRF 融合；前置校验同 vector）
+/// | hybrid（两路检索 RRF 融合；前置校验同 vector）。
+/// 实现统一走 `KnowledgeBaseService::search_any`（命令层与 MCP 共用）。
 #[tauri::command]
 pub async fn kb_search(
     state: State<'_, DbState>,
@@ -200,47 +199,14 @@ pub async fn kb_search(
     mode: Option<String>,
     top_k: Option<i64>,
 ) -> Result<Vec<SearchHit>, String> {
-    let p = pool(&state);
-    let top_k = top_k.unwrap_or(8).clamp(1, 100) as usize;
-    match mode.as_deref().unwrap_or("vector") {
-        "keyword" => search::search_keyword(p, &kb_id, &query, top_k).await,
-        "vector" => {
-            let v = embed_query(p, &kb_id, &query).await?;
-            let svc = registry.get("kb").ok_or("知识库服务不可用")?.clone();
-            let kb: &KnowledgeBaseService = svc
-                .as_any()
-                .downcast_ref::<KnowledgeBaseService>()
-                .ok_or("知识库服务类型异常")?;
-            kb.search_vector(p, &kb_id, v, top_k).await
-        }
-        "hybrid" => {
-            let v = embed_query(p, &kb_id, &query).await?;
-            let svc = registry.get("kb").ok_or("知识库服务不可用")?.clone();
-            let kb: &KnowledgeBaseService = svc
-                .as_any()
-                .downcast_ref::<KnowledgeBaseService>()
-                .ok_or("知识库服务类型异常")?;
-            // 两路各取 top_k×5（上限 100）再融合，融合排名更稳
-            let fetch_k = (top_k * 5).min(100);
-            let kw = search::search_keyword(p, &kb_id, &query, fetch_k).await?;
-            let vec = kb.search_vector(p, &kb_id, v, fetch_k).await?;
-            Ok(search::rrf_fuse(kw, vec, top_k))
-        }
-        other => Err(format!("未知检索模式: {other}（支持 keyword / vector / hybrid）")),
-    }
-}
-
-/// 按库绑定把查询文本向量化（与索引向量同一渠道/模型，保证向量空间一致）
-async fn embed_query(p: &sqlx::SqlitePool, kb_id: &str, query: &str) -> Result<Vec<f32>, String> {
-    let (channel_id, model) = embed::bound_binding(p, kb_id).await?;
-    let emb: Arc<dyn Embedder> = Arc::new(
-        embed::ChannelEmbedder::from_channel(p, &channel_id, &model).await?,
-    );
-    let vecs = emb
-        .embed_texts(&[query.trim()])
+    let svc = registry.get("kb").ok_or("知识库服务不可用")?.clone();
+    let kb: &KnowledgeBaseService = svc
+        .as_any()
+        .downcast_ref::<KnowledgeBaseService>()
+        .ok_or("知识库服务类型异常")?;
+    let top_k = top_k.unwrap_or(8) as usize;
+    kb.search_any(pool(&state), &kb_id, &query, mode.as_deref().unwrap_or("vector"), top_k)
         .await
-        .map_err(|e| format!("查询向量化失败: {e}"))?;
-    vecs.into_iter().next().ok_or("embedding 返回为空".to_string())
 }
 
 // ---- RAG 问答：绑定 / 会话 / 问答 ----

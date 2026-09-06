@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
+import { CheckCircle2, Copy } from "lucide-react";
 import { PageHeader, Card, Toggle } from "../components/ui";
 import { Button } from "../components/Modal";
 import { api } from "../api";
 import { saveTheme, type ThemePreference } from "../theme";
 import { isEnabled as autoStartEnabled, enable as autoStartEnable, disable as autoStartDisable } from "@tauri-apps/plugin-autostart";
 import { openPath } from "@tauri-apps/plugin-opener";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type { ServiceInfo, ServiceStatus } from "../types";
 
 type TabKey = "server" | "proxy" | "general" | "system" | "ui" | "retry" | "failover" | "services";
@@ -412,6 +414,9 @@ function ServicesTab() {
   const [loaded, setLoaded] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [opError, setOpError] = useState<string | null>(null);
+  // MCP 接入端点：读 services.mcp.port（缺省 8790）
+  const [mcpPort, setMcpPort] = useState(8790);
+  const [copied, setCopied] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -425,7 +430,24 @@ function ServicesTab() {
   }, []);
   useEffect(() => {
     void refresh();
+    api
+      .getSetting("services.mcp.port")
+      .then((v) => {
+        const p = Number(v);
+        if (Number.isFinite(p) && p > 0) setMcpPort(p);
+      })
+      .catch(() => {});
   }, [refresh]);
+
+  const copyEndpoint = async () => {
+    try {
+      await writeText(`http://127.0.0.1:${mcpPort}/mcp`);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setOpError("复制失败：请手动复制地址");
+    }
+  };
 
   const run = async (s: ServiceInfo, act: () => Promise<unknown>) => {
     setBusyId(s.id);
@@ -445,7 +467,8 @@ function ServicesTab() {
       <h3 className="mb-2 text-sm font-semibold text-sub">扩展服务</h3>
       <p className="mb-2 text-xs text-faint">
         知识库、MCP 等扩展以独立服务注册（services 目录 + 注册表）。开关即时热生效并写入设置（重启应用后保持）；
-        初始化失败可点重试恢复，无需重启应用。
+        初始化失败可点重试恢复，无需重启应用。MCP 服务运行中时，可在 Claude Desktop / Cline 等客户端把下面地址配为
+        MCP Server URL。
       </p>
       <div className="divide-y divide-edge">
         {services.map((s) => (
@@ -459,6 +482,22 @@ function ServicesTab() {
                 </span>
               </div>
               <p className="mt-0.5 text-xs text-faint">{s.description}</p>
+              {s.id === "mcp" && s.status === "running" && (
+                <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                  <code className="rounded-md bg-inset px-2 py-1 font-mono text-xs text-sub ring-1 ring-edge">
+                    http://127.0.0.1:{mcpPort}/mcp
+                  </code>
+                  <button
+                    onClick={() => void copyEndpoint()}
+                    className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-faint transition-colors hover:bg-hover hover:text-sub"
+                    title="复制 MCP 接入地址"
+                  >
+                    {copied ? <CheckCircle2 size={13} className="text-green-600" /> : <Copy size={13} />}
+                    {copied ? "已复制" : "复制"}
+                  </button>
+                  <span className="text-[11px] text-faint">端口可在设置 services.mcp.port 修改（重启服务生效）</span>
+                </div>
+              )}
               {s.status === "failed" && s.error && (
                 <p className="mt-1 truncate text-xs text-red-600 dark:text-red-400" title={s.error}>
                   失败原因：{s.error}

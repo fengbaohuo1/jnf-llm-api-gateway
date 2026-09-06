@@ -74,7 +74,7 @@ pub fn run() {
             // 扩展服务注册表：装配（开关 services.<id>.enabled，存 settings /
             // settings.json 双写）后由 AppState 托管——保留活实例与运行时状态，
             // 命令可热启停/重启/查询（见 commands::services）。
-            let registry = services::ServiceRegistry::new(pool.clone());
+            let registry = services::ServiceRegistry::new(pool.clone(), dir.clone());
             let boots = tauri::async_runtime::block_on(registry.start());
             for b in &boots {
                 if !b.enabled {

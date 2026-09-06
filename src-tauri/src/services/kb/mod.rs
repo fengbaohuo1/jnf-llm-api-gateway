@@ -22,7 +22,7 @@ pub mod index;
 pub mod indexing;
 mod parse;
 pub mod rag;
-mod schema;
+pub(crate) mod schema;
 pub mod search;
 
 use std::any::Any;
@@ -133,6 +133,53 @@ impl KnowledgeBaseService {
             }
         }
         Ok(hits)
+    }
+
+    /// 统一检索入口（keyword | vector | hybrid）：命令层与 MCP 共用一套实现，
+    /// 避免两处维护不同的向量化/融合逻辑。vector/hybrid 前置校验与
+    /// [`Self::search_vector`] 相同（严格报错，不做问答式降级）。
+    pub async fn search_any(
+        &self,
+        pool: &sqlx::SqlitePool,
+        kb_id: &str,
+        query: &str,
+        mode: &str,
+        top_k: usize,
+    ) -> Result<Vec<search::SearchHit>, String> {
+        let top_k = top_k.clamp(1, 100);
+        match mode {
+            "keyword" => search::search_keyword(pool, kb_id, query, top_k).await,
+            "vector" => {
+                let v = self.embed_query(pool, kb_id, query).await?;
+                self.search_vector(pool, kb_id, v, top_k).await
+            }
+            "hybrid" => {
+                let v = self.embed_query(pool, kb_id, query).await?;
+                // 两路各取 top_k×5（上限 100）再融合，融合排名更稳
+                let fetch_k = (top_k * 5).min(100);
+                let kw = search::search_keyword(pool, kb_id, query, fetch_k).await?;
+                let vec = self.search_vector(pool, kb_id, v, fetch_k).await?;
+                Ok(search::rrf_fuse(kw, vec, top_k))
+            }
+            other => Err(format!("未知检索模式: {other}（支持 keyword / vector / hybrid）")),
+        }
+    }
+
+    /// 把查询文本按库绑定向量化（与索引向量同一渠道/模型，保证向量空间一致）
+    async fn embed_query(
+        &self,
+        pool: &sqlx::SqlitePool,
+        kb_id: &str,
+        query: &str,
+    ) -> Result<Vec<f32>, String> {
+        let emb = indexing::build_embedder(pool, kb_id).await?;
+        let vecs = emb
+            .embed_texts(&[query.trim()])
+            .await
+            .map_err(|e| format!("查询向量化失败: {e}"))?;
+        vecs.into_iter()
+            .next()
+            .ok_or_else(|| "embedding 返回为空".to_string())
     }
 }
 

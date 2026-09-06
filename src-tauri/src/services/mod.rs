@@ -43,9 +43,10 @@ use sqlx::SqlitePool;
 #[derive(Debug)]
 pub struct ServiceContext {
     /// SQLite 连接池（全部服务共享同一库；服务自身 schema 在 init 中幂等自建）
-    // 占位阶段无消费者（各服务均未使用资源）；契约预留，首个真实服务落地后自然消除
-    #[allow(dead_code)]
     pub pool: SqlitePool,
+    /// 应用数据目录（索引文件等落盘资源的权威根；与 `config::data_dir` 同源，
+    /// setup 注入，服务不感知 Tauri 路径 API）
+    pub data_dir: std::path::PathBuf,
 }
 
 /// 服务生命周期契约。新增服务实现本 trait 并在 [`registry`] 登记。
@@ -76,6 +77,9 @@ pub trait Service: Any + Send + Sync {
     /// 启动装配/热启用/热重启时调用（schema 应用之后）：预热 / 自检。
     /// Err 仅记录并置本服务为 failed，不阻塞其它服务。
     async fn init(&self, ctx: &ServiceContext) -> Result<(), String>;
+    /// 停用 / 重启前调用：释放服务占用的进程资源（端口监听、后台任务句柄等）。
+    /// 默认无操作；端口型服务必须实现（否则热停用后端口仍被占用）。
+    async fn shutdown(&self) {}
 }
 
 /// 启用开关的设置键（`services.<id>.enabled`）。
@@ -87,7 +91,7 @@ pub fn enabled_key(id: &str) -> String {
 pub fn registry() -> Vec<Box<dyn Service>> {
     vec![
         Box::new(kb::KnowledgeBaseService::default()),
-        Box::new(mcp::McpService),
+        Box::new(mcp::McpService::default()),
     ]
 }
 
@@ -125,17 +129,23 @@ struct Entry {
 /// 由 Tauri `app.manage` 托管，命令通过 `State<ServiceRegistry>` 访问。
 pub struct ServiceRegistry {
     pool: SqlitePool,
+    data_dir: std::path::PathBuf,
     inner: Mutex<Vec<Entry>>,
 }
 
 impl ServiceRegistry {
-    /// 用内置注册表创建（未装配）。
-    pub fn new(pool: SqlitePool) -> Self {
-        Self::from_services(pool, registry())
+    /// 用内置注册表创建（未装配）。`data_dir` 与应用数据目录同源，
+    /// 经 [`ServiceContext`] 注入各服务。
+    pub fn new(pool: SqlitePool, data_dir: std::path::PathBuf) -> Self {
+        Self::from_services(pool, data_dir, registry())
     }
 
     /// 用给定服务列表创建（测试注入假服务用）。
-    fn from_services(pool: SqlitePool, services: Vec<Box<dyn Service>>) -> Self {
+    fn from_services(
+        pool: SqlitePool,
+        data_dir: std::path::PathBuf,
+        services: Vec<Box<dyn Service>>,
+    ) -> Self {
         let entries = services
             .into_iter()
             .map(|s| Entry {
@@ -145,6 +155,7 @@ impl ServiceRegistry {
             .collect();
         Self {
             pool,
+            data_dir,
             inner: Mutex::new(entries),
         }
     }
@@ -217,7 +228,8 @@ impl ServiceRegistry {
     }
 
     /// 运行时启停服务（命令层先同步设置键 `services.<id>.enabled` 再调用本方法）。
-    /// enabled=true：立即 init（已 running 则 no-op）；false：置为 disabled。
+    /// enabled=true：立即 init（已 running 则 no-op）；false：先 shutdown（释放
+    /// 端口等资源）再置为 disabled。
     pub async fn apply_enabled(&self, id: &str, enabled: bool) -> Result<(), String> {
         let idx = self.find(id)?;
         if enabled {
@@ -230,12 +242,20 @@ impl ServiceRegistry {
             }
             self.init_one(idx).await.map(|_| ())
         } else {
+            let running = {
+                let g = self.inner.lock().unwrap();
+                matches!(g[idx].state, RuntimeState::Running | RuntimeState::Failed(_))
+            };
+            if running {
+                let svc = self.svc_at(idx);
+                svc.shutdown().await;
+            }
             self.set_state(idx, RuntimeState::Disabled);
             Ok(())
         }
     }
 
-    /// 热重启：对已启用的服务重跑 init（init 幂等，可安全重复）。
+    /// 热重启：先 shutdown 释放资源，再对已启用的服务重跑 init（init 幂等，可安全重复）。
     /// 停用中的服务不可重启（先启用）。
     pub async fn restart(&self, id: &str) -> Result<(), String> {
         let idx = self.find(id)?;
@@ -246,6 +266,8 @@ impl ServiceRegistry {
         if disabled {
             return Err(format!("服务 {id} 已停用，请先启用再重启"));
         }
+        let svc = self.svc_at(idx);
+        svc.shutdown().await;
         self.init_one(idx).await.map(|_| ())
     }
 
@@ -278,6 +300,7 @@ impl ServiceRegistry {
             Ok(()) => svc
                 .init(&ServiceContext {
                     pool: self.pool.clone(),
+                    data_dir: self.data_dir.clone(),
                 })
                 .await,
             Err(e) => Err(e),
@@ -390,7 +413,7 @@ mod tests {
     use super::*;
     use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
     use std::str::FromStr;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     async fn test_pool(create_settings: bool) -> SqlitePool {
         let opts = SqliteConnectOptions::from_str("sqlite::memory:")
@@ -412,11 +435,21 @@ mod tests {
         pool
     }
 
+    /// 测试用数据目录（构造 ServiceRegistry 时注入）
+    fn test_dir() -> std::path::PathBuf {
+        std::env::temp_dir()
+    }
+
     async fn set_enabled(pool: &SqlitePool, id: &str, value: &str) {
+        set_value(pool, &enabled_key(id), value).await;
+    }
+
+    /// 写任意设置键（测试用；settings 表须已创建）
+    async fn set_value(pool: &SqlitePool, key: &str, value: &str) {
         sqlx::query(
             "INSERT INTO settings (key, value, updated_at) VALUES (?1, ?2, '2025-01-01 00:00:00')",
         )
-        .bind(enabled_key(id))
+        .bind(key)
         .bind(value)
         .execute(pool)
         .await
@@ -507,14 +540,16 @@ mod tests {
 
     #[tokio::test]
     async fn default_all_services_boot_ok() {
-        let pool = test_pool(false).await;
-        let reg = ServiceRegistry::new(pool);
+        let pool = test_pool(true).await;
+        // MCP 是真实网络服务：测试固定随机端口（0），避免并行用例抢 8790
+        set_value(&pool, "services.mcp.port", "0").await;
+        let reg = ServiceRegistry::new(pool, test_dir());
         let boots = reg.start().await;
 
         assert_eq!(boots.len(), 2);
         for b in &boots {
             assert!(b.enabled, "{} 应默认启用", b.id);
-            assert!(b.ok, "{} 占位 init 应成功", b.id);
+            assert!(b.ok, "{} init 应成功", b.id);
             assert!(b.error.is_none());
         }
         let info = reg.list();
@@ -528,7 +563,8 @@ mod tests {
     async fn disabled_service_is_skipped() {
         let pool = test_pool(true).await;
         set_enabled(&pool, "kb", "false").await;
-        let reg = ServiceRegistry::new(pool);
+        set_value(&pool, "services.mcp.port", "0").await;
+        let reg = ServiceRegistry::new(pool, test_dir());
         let boots = reg.start().await;
 
         let kb = boots.iter().find(|b| b.id == "kb").unwrap();
@@ -547,7 +583,7 @@ mod tests {
     async fn non_true_value_counts_as_disabled() {
         let pool = test_pool(true).await;
         set_enabled(&pool, "mcp", "yes").await; // 脏值视为停用
-        let reg = ServiceRegistry::new(pool);
+        let reg = ServiceRegistry::new(pool, test_dir());
         reg.start().await;
         let info = reg.list();
         let mcp = info.iter().find(|s| s.id == "mcp").unwrap();
@@ -559,6 +595,7 @@ mod tests {
         let pool = test_pool(false).await;
         let reg = ServiceRegistry::from_services(
             pool,
+            test_dir(),
             vec![
                 Box::new(BoomService("boom", "磁盘损坏")),
                 Box::new(OkService("fine")),
@@ -584,7 +621,7 @@ mod tests {
     #[tokio::test]
     async fn apply_enabled_toggles_runtime_state() {
         let pool = test_pool(false).await;
-        let reg = ServiceRegistry::new(pool);
+        let reg = ServiceRegistry::new(pool, test_dir());
         reg.start().await;
 
         // 停用 kb
@@ -606,7 +643,7 @@ mod tests {
     #[tokio::test]
     async fn restart_recovers_failed_service() {
         let pool = test_pool(false).await;
-        let reg = ServiceRegistry::from_services(pool, vec![Box::new(FlakyService("flaky"))]);
+        let reg = ServiceRegistry::from_services(pool, test_dir(), vec![Box::new(FlakyService("flaky"))]);
         let boots = reg.start().await;
         assert!(!boots[0].ok, "首次 init 应失败");
 
@@ -622,7 +659,7 @@ mod tests {
     #[tokio::test]
     async fn restart_rejected_when_disabled() {
         let pool = test_pool(false).await;
-        let reg = ServiceRegistry::new(pool);
+        let reg = ServiceRegistry::new(pool, test_dir());
         reg.start().await;
         reg.apply_enabled("kb", false).await.unwrap();
         let err = reg.restart("kb").await.unwrap_err();
@@ -632,7 +669,7 @@ mod tests {
     #[tokio::test]
     async fn registry_get_returns_typed_instance() {
         let pool = test_pool(false).await;
-        let reg = ServiceRegistry::from_services(pool, vec![Box::new(OkService("kb-typed"))]);
+        let reg = ServiceRegistry::from_services(pool, test_dir(), vec![Box::new(OkService("kb-typed"))]);
         reg.start().await;
         let svc = reg.get("kb-typed").expect("按 id 取活实例");
         let typed = svc
@@ -715,7 +752,7 @@ mod tests {
     #[tokio::test]
     async fn schema_bootstraps_once_and_skips_on_restart() {
         let pool = test_pool(false).await;
-        let reg = ServiceRegistry::from_services(pool, vec![Box::new(SchemaService("schema"))]);
+        let reg = ServiceRegistry::from_services(pool, test_dir(), vec![Box::new(SchemaService("schema"))]);
         let boots = reg.start().await;
         assert!(boots[0].ok, "schema 应用后 init 应成功");
 
@@ -746,6 +783,7 @@ mod tests {
         let pool = test_pool(false).await;
         let reg = ServiceRegistry::from_services(
             pool,
+            test_dir(),
             vec![Box::new(BadSchemaService("badschema"))],
         );
         let boots = reg.start().await;
@@ -770,5 +808,58 @@ mod tests {
         .await
         .unwrap();
         assert!(v.is_none());
+    }
+
+    // ---- shutdown 生命周期 ----
+
+    /// 测试用"记录 shutdown 调用次数"的服务（同时校验 data_dir 注入）
+    struct ShutdownSpyService(&'static str, std::sync::Arc<AtomicUsize>);
+
+    #[async_trait::async_trait]
+    impl Service for ShutdownSpyService {
+        fn id(&self) -> &'static str {
+            self.0
+        }
+        fn name(&self) -> &'static str {
+            self.0
+        }
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+        fn description(&self) -> &'static str {
+            "test"
+        }
+        async fn init(&self, ctx: &ServiceContext) -> Result<(), String> {
+            assert_eq!(ctx.data_dir, test_dir(), "data_dir 应经 ServiceContext 注入");
+            Ok(())
+        }
+        async fn shutdown(&self) {
+            self.1.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn disable_and_restart_invoke_shutdown() {
+        let pool = test_pool(false).await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let reg = ServiceRegistry::from_services(
+            pool,
+            test_dir(),
+            vec![Box::new(ShutdownSpyService("spy", calls.clone()))],
+        );
+        reg.start().await;
+        assert_eq!(calls.load(Ordering::SeqCst), 0, "启动不应触发 shutdown");
+
+        // 停用 → shutdown 一次；重复停用不重复调用
+        reg.apply_enabled("spy", false).await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        reg.apply_enabled("spy", false).await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "已停用再停用不应重复 shutdown");
+
+        // 重新启用与热重启：先 shutdown 释放资源再 init
+        reg.apply_enabled("spy", true).await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        reg.restart("spy").await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2, "重启应先 shutdown");
     }
 }
