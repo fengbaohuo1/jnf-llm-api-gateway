@@ -34,6 +34,7 @@
 pub mod kb;
 pub mod mcp;
 
+use std::any::Any;
 use std::sync::{Arc, Mutex};
 
 use sqlx::SqlitePool;
@@ -48,8 +49,10 @@ pub struct ServiceContext {
 }
 
 /// 服务生命周期契约。新增服务实现本 trait 并在 [`registry`] 登记。
+/// `Any` 超 trait + [`Service::as_any`] 允许命令层按具体类型取回活实例
+/// （如知识库的内存索引挂在服务 struct 内部）。
 #[async_trait::async_trait]
-pub trait Service: Send + Sync {
+pub trait Service: Any + Send + Sync {
     /// 稳定标识：设置键 `services.<id>.enabled`、日志与未来的端点前缀均以此为准。
     fn id(&self) -> &'static str;
     /// 展示名（日志与服务列表 UI）。
@@ -60,6 +63,10 @@ pub trait Service: Send + Sync {
     fn default_enabled(&self) -> bool {
         true
     }
+    /// 类型擦除视图：命令层用 `registry.get(id)` + `downcast_ref` 取回具体实例。
+    /// 每个实现写一行 `fn as_any(&self) -> &dyn Any { self }`（无法给默认实现：
+    /// 默认方法体中 Self 未定大小，不能做 dyn 转换）。
+    fn as_any(&self) -> &dyn Any;
     /// 服务级 schema 迁移：`(版本名, SQL 语句数组)`，按声明顺序执行；已应用版本
     /// 由框架记录于 `service_schema` 表并跳过，未应用部分在单个事务内执行
     /// （失败整体回滚，服务置 failed）。默认无。
@@ -79,7 +86,7 @@ pub fn enabled_key(id: &str) -> String {
 /// 内置服务注册表：新增服务在这里登记一行。
 pub fn registry() -> Vec<Box<dyn Service>> {
     vec![
-        Box::new(kb::KnowledgeBaseService),
+        Box::new(kb::KnowledgeBaseService::default()),
         Box::new(mcp::McpService),
     ]
 }
@@ -245,6 +252,15 @@ impl ServiceRegistry {
     /// 取第 i 个服务的活实例（Arc clone，锁外可安全 await init）。
     fn svc_at(&self, i: usize) -> Arc<dyn Service> {
         self.inner.lock().unwrap()[i].svc.clone()
+    }
+
+    /// 按 id 取活实例（Arc clone；命令层配合 `as_any().downcast_ref::<T>()`
+    /// 取回具体类型，访问服务内部状态如内存索引）。
+    pub fn get(&self, id: &str) -> Option<Arc<dyn Service>> {
+        let g = self.inner.lock().unwrap();
+        g.iter()
+            .find(|e| e.svc.id() == id)
+            .map(|e| e.svc.clone())
     }
 
     /// 按 id 查条目下标。
@@ -418,6 +434,9 @@ mod tests {
         fn name(&self) -> &'static str {
             self.0
         }
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
         fn description(&self) -> &'static str {
             "test"
         }
@@ -437,6 +456,9 @@ mod tests {
         fn name(&self) -> &'static str {
             self.0
         }
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
         fn description(&self) -> &'static str {
             "test"
         }
@@ -455,6 +477,9 @@ mod tests {
         }
         fn name(&self) -> &'static str {
             self.0
+        }
+        fn as_any(&self) -> &dyn Any {
+            self
         }
         fn description(&self) -> &'static str {
             "test"
@@ -604,6 +629,20 @@ mod tests {
         assert!(err.contains("已停用"), "停用服务不应允许重启: {err}");
     }
 
+    #[tokio::test]
+    async fn registry_get_returns_typed_instance() {
+        let pool = test_pool(false).await;
+        let reg = ServiceRegistry::from_services(pool, vec![Box::new(OkService("kb-typed"))]);
+        reg.start().await;
+        let svc = reg.get("kb-typed").expect("按 id 取活实例");
+        let typed = svc
+            .as_any()
+            .downcast_ref::<OkService>()
+            .expect("应能 downcast 回具体类型");
+        assert_eq!(typed.0, "kb-typed");
+        assert!(reg.get("missing").is_none());
+    }
+
     /// 测试用带 schema 的服务（两个版本）
     struct SchemaService(&'static str);
 
@@ -614,6 +653,9 @@ mod tests {
         }
         fn name(&self) -> &'static str {
             self.0
+        }
+        fn as_any(&self) -> &dyn Any {
+            self
         }
         fn description(&self) -> &'static str {
             "test"
@@ -648,6 +690,9 @@ mod tests {
         }
         fn name(&self) -> &'static str {
             self.0
+        }
+        fn as_any(&self) -> &dyn Any {
+            self
         }
         fn description(&self) -> &'static str {
             "test"

@@ -221,6 +221,12 @@ pub fn run() {
             commands::kb::kb_import_file,
             commands::kb::kb_delete_document,
             commands::kb::kb_list_chunks,
+            // knowledge base（向量化 / HNSW 索引）
+            commands::kb::kb_bind_embedding,
+            commands::kb::kb_unbind_embedding,
+            commands::kb::kb_build_index,
+            commands::kb::kb_list_tasks,
+            commands::kb::kb_search,
             // daily stats
             commands::stats::list_daily_stats,
             commands::stats::today_stats,

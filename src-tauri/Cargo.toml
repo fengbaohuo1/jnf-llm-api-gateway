@@ -45,4 +45,5 @@ tokio-stream = "0.1"
 regex = "1"
 aho-corasick = "1"
 pulldown-cmark = "0.13.4"
+bincode = "1"
 

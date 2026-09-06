@@ -8,6 +8,8 @@
 //! - 端点：MCP 官方协议含 stdio/HTTP transport，进程内端点挂载方式待首个真实
 //!   能力落地时在服务契约中扩展（占位阶段不定义空接口）。
 
+use std::any::Any;
+
 use super::{Service, ServiceContext};
 
 /// MCP 服务：Model Context Protocol 工具服务（占位）。
@@ -21,6 +23,10 @@ impl Service for McpService {
 
     fn name(&self) -> &'static str {
         "MCP 服务"
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 
     fn description(&self) -> &'static str {

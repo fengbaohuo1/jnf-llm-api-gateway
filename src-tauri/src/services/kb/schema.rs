@@ -133,6 +133,25 @@ pub(crate) static KB_SCHEMA: &[(&'static str, &'static [&'static str])] = &[
             "ALTER TABLE kb_chunks ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'",
         ],
     ),
+    (
+        "0003_kb_index_tasks",
+        &[
+            // 异步任务台账（embedding 外呼 / 索引构建是分钟级管道，需要进度与恢复）
+            "CREATE TABLE IF NOT EXISTS kb_tasks (
+                id            TEXT PRIMARY KEY,
+                kb_id         TEXT NOT NULL REFERENCES kb_knowledge_bases(id) ON DELETE CASCADE,
+                task_type     TEXT NOT NULL,
+                status        TEXT NOT NULL DEFAULT 'pending',
+                total_items   INTEGER NOT NULL DEFAULT 0,
+                done_items    INTEGER NOT NULL DEFAULT 0,
+                progress      INTEGER NOT NULL DEFAULT 0,
+                error_message TEXT,
+                created_at    TEXT NOT NULL,
+                completed_at  TEXT
+            )",
+            "CREATE INDEX IF NOT EXISTS idx_kb_tasks_kb ON kb_tasks(kb_id, created_at)",
+        ],
+    ),
 ];
 
 /// 直接执行全部 schema（幂等）。测试与临时工具用；正式路径由

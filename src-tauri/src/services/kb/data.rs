@@ -485,7 +485,8 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", h.finalize())
 }
 
-async fn read_base(pool: &SqlitePool, id: &str) -> Result<Option<KbBase>, String> {
+/// 内部读取（同目录模块共享；embedding 绑定/索引管道/检索前置校验用）
+pub(crate) async fn read_base(pool: &SqlitePool, id: &str) -> Result<Option<KbBase>, String> {
     sqlx::query_as::<_, KbBase>(&format!("{KBASE_SELECT} WHERE kb_knowledge_bases.id = ?1"))
         .bind(id)
         .fetch_optional(pool)
@@ -493,7 +494,8 @@ async fn read_base(pool: &SqlitePool, id: &str) -> Result<Option<KbBase>, String
         .map_err(|e| e.to_string())
 }
 
-async fn read_document(pool: &SqlitePool, id: &str) -> Result<Option<KbDocument>, String> {
+/// 读取文档（同目录模块共享）
+pub(crate) async fn read_document(pool: &SqlitePool, id: &str) -> Result<Option<KbDocument>, String> {
     sqlx::query_as::<_, KbDocument>(&format!("SELECT {DOC_COLS} FROM kb_documents WHERE id = ?1"))
         .bind(id)
         .fetch_optional(pool)

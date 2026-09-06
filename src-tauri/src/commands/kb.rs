@@ -1,10 +1,16 @@
-//! 知识库 Tauri 命令（薄包装层：参数校验与错误透传委托给 kb::data）。
+//! 知识库 Tauri 命令（薄包装层：参数校验与错误透传委托给 kb 数据/服务层）。
 //! 命名 kb_*；参数由 Tauri 自动 camelCase → snake_case。
+
+use std::sync::Arc;
 
 use tauri::State;
 
 use crate::commands::DbState;
 use crate::services::kb::data::{self, KbBase, KbChunk, KbDocument};
+use crate::services::kb::embed::{self, Embedder};
+use crate::services::kb::search::SearchHit;
+use crate::services::kb::{indexing, KnowledgeBaseService};
+use crate::services::ServiceRegistry;
 
 use super::pool;
 
@@ -57,10 +63,20 @@ pub async fn kb_update_base(
     .await
 }
 
-/// 删除知识库（级联删除全部文档/分块/全文索引）
+/// 删除知识库（级联删除全部文档/分块/全文索引；同步丢弃内存向量索引）
 #[tauri::command]
-pub async fn kb_delete_base(state: State<'_, DbState>, id: String) -> Result<(), String> {
-    data::delete_base(pool(&state), &id).await
+pub async fn kb_delete_base(
+    state: State<'_, DbState>,
+    registry: State<'_, ServiceRegistry>,
+    id: String,
+) -> Result<(), String> {
+    data::delete_base(pool(&state), &id).await?;
+    if let Some(svc) = registry.get("kb") {
+        if let Some(kb) = svc.as_any().downcast_ref::<KnowledgeBaseService>() {
+            kb.drop_index(&id);
+        }
+    }
+    Ok(())
 }
 
 /// 知识库文档列表
@@ -96,7 +112,10 @@ pub async fn kb_import_file(
 
 /// 删除文档（级联分块并同步清理全文索引）
 #[tauri::command]
-pub async fn kb_delete_document(state: State<'_, DbState>, document_id: String) -> Result<(), String> {
+pub async fn kb_delete_document(
+    state: State<'_, DbState>,
+    document_id: String,
+) -> Result<(), String> {
     data::delete_document(pool(&state), &document_id).await
 }
 
@@ -107,4 +126,103 @@ pub async fn kb_list_chunks(
     document_id: String,
 ) -> Result<Vec<KbChunk>, String> {
     data::list_chunks(pool(&state), &document_id).await
+}
+
+/// 绑定 embedding 渠道与模型（换绑即作废旧向量，需重新构建）
+#[tauri::command]
+pub async fn kb_bind_embedding(
+    state: State<'_, DbState>,
+    kb_id: String,
+    channel_id: String,
+    model: String,
+) -> Result<KbBase, String> {
+    embed::bind_embedding(pool(&state), &kb_id, &channel_id, &model).await
+}
+
+/// 解除 embedding 绑定（清空模型/渠道/维度与全部向量）
+#[tauri::command]
+pub async fn kb_unbind_embedding(
+    state: State<'_, DbState>,
+    kb_id: String,
+) -> Result<KbBase, String> {
+    embed::unbind_embedding(pool(&state), &kb_id).await
+}
+
+/// 发起索引构建（embedding + HNSW）：后台任务执行，返回任务 id（进度查 kb_list_tasks）
+#[tauri::command]
+pub async fn kb_build_index(
+    app: tauri::AppHandle,
+    state: State<'_, DbState>,
+    kb_id: String,
+) -> Result<String, String> {
+    let p = pool(&state);
+    if indexing::has_running_task(p, &kb_id).await? {
+        return Err("该知识库已有进行中的构建任务".to_string());
+    }
+    // 校验绑定可用（提前暴露渠道问题，不留到后台）
+    let (_ch, _model) = embed::bound_binding(p, &kb_id).await?;
+    let task_id = indexing::create_task(p, &kb_id, "embed_index").await?;
+
+    // 索引目录：数据目录/kb_index（HNSW 文件与 SQLite 同处，随库备份/迁移）
+    let dir = crate::config::data_dir(&app)?.join("kb_index");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建索引目录失败: {e}"))?;
+    let pool2 = p.clone();
+    let dir2 = dir;
+    let task_id2 = task_id.clone();
+    tauri::async_runtime::spawn(async move {
+        match indexing::run_embed_index_task(&pool2, &task_id2, &dir2, None).await {
+            Ok(()) => eprintln!("[kb] 索引任务 {task_id2} 完成"),
+            Err(e) => eprintln!("[kb] 索引任务 {task_id2} 失败: {e}"),
+        }
+    });
+    Ok(task_id)
+}
+
+/// 知识库任务列表（构建进度轮询用）
+#[tauri::command]
+pub async fn kb_list_tasks(
+    state: State<'_, DbState>,
+    kb_id: String,
+    limit: Option<i64>,
+) -> Result<Vec<indexing::KbTask>, String> {
+    indexing::list_tasks(pool(&state), &kb_id, limit.unwrap_or(20)).await
+}
+
+/// 检索知识库：mode = keyword（FTS5 BM25）| vector（embedding + HNSW）
+#[tauri::command]
+pub async fn kb_search(
+    state: State<'_, DbState>,
+    registry: State<'_, ServiceRegistry>,
+    kb_id: String,
+    query: String,
+    mode: Option<String>,
+    top_k: Option<i64>,
+) -> Result<Vec<SearchHit>, String> {
+    let p = pool(&state);
+    let top_k = top_k.unwrap_or(8).clamp(1, 100) as usize;
+    match mode.as_deref().unwrap_or("vector") {
+        "keyword" => crate::services::kb::search::search_keyword(p, &kb_id, &query, top_k).await,
+        "vector" => {
+            let svc = registry
+                .get("kb")
+                .ok_or("知识库服务不可用")?
+                .clone();
+            let kb: &KnowledgeBaseService = svc
+                .as_any()
+                .downcast_ref::<KnowledgeBaseService>()
+                .ok_or("知识库服务类型异常")?;
+            // 查询向量：按库绑定走同一渠道/模型，保证与索引向量空间一致
+            let (channel_id, model) = embed::bound_binding(p, &kb_id).await?;
+            let emb: Arc<dyn Embedder> = Arc::new(
+                embed::ChannelEmbedder::from_channel(p, &channel_id, &model).await?,
+            );
+            let vecs = emb
+                .embed_texts(&[query.trim()])
+                .await
+                .map_err(|e| format!("查询向量化失败: {e}"))?;
+            let v = vecs.into_iter().next().ok_or("embedding 返回为空")?;
+            kb.search_vector(p, &kb_id, v, top_k).await
+        }
+        other => Err(format!("未知检索模式: {other}（支持 keyword / vector）")),
+    }
 }
