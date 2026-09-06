@@ -114,5 +114,6 @@ pub fn create_adapter(
 
 // ---------------- 共享工具 ----------------
 
-/// 统一的请求超时
-pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// 统一的请求超时（90s：适配器 chat_completion 供渠道连通测试与知识库 RAG 问答
+/// 使用，长文档上下文首 token 较慢；代理转发透传路径是独立 client，不受影响）
+pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(90);

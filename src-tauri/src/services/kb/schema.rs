@@ -12,6 +12,10 @@
 //!   （embedding_model/embedding_channel_id，逻辑引用 channels 表不建物理外键，
 //!   渠道删除策略独立）、文档 file_size、分块 metadata JSON（pdf 页码等格式特有
 //!   元数据兜底；md 结构溯源仍走 heading 列）。
+//! - **0004**：RAG 问答绑定（answer_channel_id/answer_model）。与 embedding 绑定
+//!   解耦：embedding 渠道可能无 chat 能力（如本地 Embedder），问答渠道可能无
+//!   embedding 能力（如 DeepSeek）；两者逻辑引用 channels，删除策略各自独立。
+//!   会话/消息表（0001 预留）与 kb_sessions → kb_conversations 级联已就绪。
 //!
 //! 迁移不可修改：已应用版本由框架记录并跳过，schema 演进只能追加新版本。
 
@@ -150,6 +154,14 @@ pub(crate) static KB_SCHEMA: &[(&'static str, &'static [&'static str])] = &[
                 completed_at  TEXT
             )",
             "CREATE INDEX IF NOT EXISTS idx_kb_tasks_kb ON kb_tasks(kb_id, created_at)",
+        ],
+    ),
+    (
+        "0004_kb_rag",
+        &[
+            // RAG 问答绑定：与 embedding 绑定解耦（问答模型由适配器 chat 调用）
+            "ALTER TABLE kb_knowledge_bases ADD COLUMN answer_channel_id TEXT",
+            "ALTER TABLE kb_knowledge_bases ADD COLUMN answer_model TEXT",
         ],
     ),
 ];

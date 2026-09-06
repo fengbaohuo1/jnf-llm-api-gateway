@@ -50,6 +50,10 @@ pub struct KbBase {
     pub embedding_model: Option<String>,
     /// 绑定 embedding 渠道 id（逻辑引用 channels 表，不建物理外键）
     pub embedding_channel_id: Option<String>,
+    /// 问答渠道 id（RAG 用；与 embedding 绑定解耦，0004 字段）
+    pub answer_channel_id: Option<String>,
+    /// 问答模型名（绑定问答渠道时落库，默认取渠道默认模型）
+    pub answer_model: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     /// 文档数（列表展示用）
@@ -95,10 +99,12 @@ pub struct KbChunk {
 
 const KBASE_COLS: &str = "id, name, description, chunk_size, chunk_overlap, \
      excluded_dirs, excluded_files, included_files, embedding_dim, \
-     index_status, status, embedding_model, embedding_channel_id, created_at, updated_at";
+     index_status, status, embedding_model, embedding_channel_id, \
+     answer_channel_id, answer_model, created_at, updated_at";
 const KBASE_SELECT: &str = "SELECT id, name, description, chunk_size, chunk_overlap, \
      excluded_dirs, excluded_files, included_files, embedding_dim, \
-     index_status, status, embedding_model, embedding_channel_id, created_at, updated_at, \
+     index_status, status, embedding_model, embedding_channel_id, \
+     answer_channel_id, answer_model, created_at, updated_at, \
      (SELECT COUNT(*) FROM kb_documents d WHERE d.kb_id = kb_knowledge_bases.id) AS doc_count \
      FROM kb_knowledge_bases";
 const DOC_COLS: &str = "id, kb_id, title, format, file_size, source_type, source_url, \
@@ -132,7 +138,7 @@ pub async fn create_base(
     let now = now_iso();
     sqlx::query(&format!(
         "INSERT INTO kb_knowledge_bases ({KBASE_COLS}) \
-         VALUES (?1,?2,?3,?4,?5,'','','',0,'none','active',NULL,NULL,?6,?7)"
+         VALUES (?1,?2,?3,?4,?5,'','','',0,'none','active',NULL,NULL,NULL,NULL,?6,?7)"
     ))
     .bind(&id)
     .bind(name)

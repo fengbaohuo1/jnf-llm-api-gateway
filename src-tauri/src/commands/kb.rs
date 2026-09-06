@@ -8,7 +8,8 @@ use tauri::State;
 use crate::commands::DbState;
 use crate::services::kb::data::{self, KbBase, KbChunk, KbDocument};
 use crate::services::kb::embed::{self, Embedder};
-use crate::services::kb::search::SearchHit;
+use crate::services::kb::rag::{self, ChatReply, KbMessage, KbSession};
+use crate::services::kb::search::{self, SearchHit};
 use crate::services::kb::{indexing, KnowledgeBaseService};
 use crate::services::ServiceRegistry;
 
@@ -189,6 +190,7 @@ pub async fn kb_list_tasks(
 }
 
 /// 检索知识库：mode = keyword（FTS5 BM25）| vector（embedding + HNSW）
+/// | hybrid（两路检索 RRF 融合；前置校验同 vector）
 #[tauri::command]
 pub async fn kb_search(
     state: State<'_, DbState>,
@@ -201,28 +203,117 @@ pub async fn kb_search(
     let p = pool(&state);
     let top_k = top_k.unwrap_or(8).clamp(1, 100) as usize;
     match mode.as_deref().unwrap_or("vector") {
-        "keyword" => crate::services::kb::search::search_keyword(p, &kb_id, &query, top_k).await,
+        "keyword" => search::search_keyword(p, &kb_id, &query, top_k).await,
         "vector" => {
-            let svc = registry
-                .get("kb")
-                .ok_or("知识库服务不可用")?
-                .clone();
+            let v = embed_query(p, &kb_id, &query).await?;
+            let svc = registry.get("kb").ok_or("知识库服务不可用")?.clone();
             let kb: &KnowledgeBaseService = svc
                 .as_any()
                 .downcast_ref::<KnowledgeBaseService>()
                 .ok_or("知识库服务类型异常")?;
-            // 查询向量：按库绑定走同一渠道/模型，保证与索引向量空间一致
-            let (channel_id, model) = embed::bound_binding(p, &kb_id).await?;
-            let emb: Arc<dyn Embedder> = Arc::new(
-                embed::ChannelEmbedder::from_channel(p, &channel_id, &model).await?,
-            );
-            let vecs = emb
-                .embed_texts(&[query.trim()])
-                .await
-                .map_err(|e| format!("查询向量化失败: {e}"))?;
-            let v = vecs.into_iter().next().ok_or("embedding 返回为空")?;
             kb.search_vector(p, &kb_id, v, top_k).await
         }
-        other => Err(format!("未知检索模式: {other}（支持 keyword / vector）")),
+        "hybrid" => {
+            let v = embed_query(p, &kb_id, &query).await?;
+            let svc = registry.get("kb").ok_or("知识库服务不可用")?.clone();
+            let kb: &KnowledgeBaseService = svc
+                .as_any()
+                .downcast_ref::<KnowledgeBaseService>()
+                .ok_or("知识库服务类型异常")?;
+            // 两路各取 top_k×5（上限 100）再融合，融合排名更稳
+            let fetch_k = (top_k * 5).min(100);
+            let kw = search::search_keyword(p, &kb_id, &query, fetch_k).await?;
+            let vec = kb.search_vector(p, &kb_id, v, fetch_k).await?;
+            Ok(search::rrf_fuse(kw, vec, top_k))
+        }
+        other => Err(format!("未知检索模式: {other}（支持 keyword / vector / hybrid）")),
     }
+}
+
+/// 按库绑定把查询文本向量化（与索引向量同一渠道/模型，保证向量空间一致）
+async fn embed_query(p: &sqlx::SqlitePool, kb_id: &str, query: &str) -> Result<Vec<f32>, String> {
+    let (channel_id, model) = embed::bound_binding(p, kb_id).await?;
+    let emb: Arc<dyn Embedder> = Arc::new(
+        embed::ChannelEmbedder::from_channel(p, &channel_id, &model).await?,
+    );
+    let vecs = emb
+        .embed_texts(&[query.trim()])
+        .await
+        .map_err(|e| format!("查询向量化失败: {e}"))?;
+    vecs.into_iter().next().ok_or("embedding 返回为空".to_string())
+}
+
+// ---- RAG 问答：绑定 / 会话 / 问答 ----
+
+/// 绑定问答渠道与模型（与 embedding 绑定解耦；不指定模型时取渠道默认）
+#[tauri::command]
+pub async fn kb_bind_answer(
+    state: State<'_, DbState>,
+    kb_id: String,
+    channel_id: String,
+    model: Option<String>,
+) -> Result<KbBase, String> {
+    rag::bind_answer(pool(&state), &kb_id, &channel_id, model.as_deref()).await
+}
+
+/// 解除问答绑定
+#[tauri::command]
+pub async fn kb_unbind_answer(
+    state: State<'_, DbState>,
+    kb_id: String,
+) -> Result<KbBase, String> {
+    rag::unbind_answer(pool(&state), &kb_id).await
+}
+
+/// 创建问答会话（标题缺省"新对话"，首问后自动摘要替换）
+#[tauri::command]
+pub async fn kb_create_session(
+    state: State<'_, DbState>,
+    kb_id: String,
+    title: Option<String>,
+) -> Result<KbSession, String> {
+    rag::create_session(pool(&state), &kb_id, title.as_deref()).await
+}
+
+/// 知识库会话列表（按最近活跃排序）
+#[tauri::command]
+pub async fn kb_list_sessions(
+    state: State<'_, DbState>,
+    kb_id: String,
+) -> Result<Vec<KbSession>, String> {
+    rag::list_sessions(pool(&state), &kb_id).await
+}
+
+/// 删除会话（级联删除其全部消息）
+#[tauri::command]
+pub async fn kb_delete_session(
+    state: State<'_, DbState>,
+    session_id: String,
+) -> Result<(), String> {
+    rag::delete_session(pool(&state), &session_id).await
+}
+
+/// 会话消息列表（升序；sources 已解析为引用数组）
+#[tauri::command]
+pub async fn kb_list_messages(
+    state: State<'_, DbState>,
+    session_id: String,
+) -> Result<Vec<KbMessage>, String> {
+    rag::list_messages(pool(&state), &session_id).await
+}
+
+/// 发送问题并回答：hybrid 检索（索引未就绪自动降级关键词）+ 引用溯源落库
+#[tauri::command]
+pub async fn kb_chat(
+    state: State<'_, DbState>,
+    registry: State<'_, ServiceRegistry>,
+    session_id: String,
+    question: String,
+) -> Result<ChatReply, String> {
+    let svc = registry.get("kb").ok_or("知识库服务不可用")?.clone();
+    let kb: &KnowledgeBaseService = svc
+        .as_any()
+        .downcast_ref::<KnowledgeBaseService>()
+        .ok_or("知识库服务类型异常")?;
+    kb.chat(pool(&state), &session_id, &question).await
 }

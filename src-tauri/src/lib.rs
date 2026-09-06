@@ -227,6 +227,14 @@ pub fn run() {
             commands::kb::kb_build_index,
             commands::kb::kb_list_tasks,
             commands::kb::kb_search,
+            // knowledge base（RAG 会话问答）
+            commands::kb::kb_bind_answer,
+            commands::kb::kb_unbind_answer,
+            commands::kb::kb_create_session,
+            commands::kb::kb_list_sessions,
+            commands::kb::kb_delete_session,
+            commands::kb::kb_list_messages,
+            commands::kb::kb_chat,
             // daily stats
             commands::stats::list_daily_stats,
             commands::stats::today_stats,

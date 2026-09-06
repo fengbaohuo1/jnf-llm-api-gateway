@@ -15,7 +15,8 @@ pub struct SearchHit {
     pub heading: String,
     pub seq: i64,
     pub content: String,
-    /// 相关度：keyword = bm25 分；vector = 余弦相似度（0..1）
+    /// 相关度：keyword = bm25 分（负值）；vector = 余弦相似度（0..1）；
+    /// hybrid = RRF 融合分（越大越相关，见 [`rrf_fuse`]）
     pub score: f64,
 }
 
@@ -98,6 +99,43 @@ pub(crate) async fn chunks_by_ids(
         q = q.bind(id);
     }
     q.fetch_all(pool).await.map_err(|e| e.to_string())
+}
+
+/// RRF（Reciprocal Rank Fusion）融合两路命中，按 chunk 去重对齐。
+///
+/// 融合分 = Σ 1/(60 + rank)，rank 从 1 起——出现在两路的块天然高于只出现一路的
+/// 块，且无需跨路归一化 bm25（负值）与余弦相似度（0..1）的量纲。
+/// 命中详情优先取 `primary`（语义更强的向量路），缺失回填 `secondary`。
+/// 返回按融合分降序、截断到 `top_k` 的命中（score 语义为 RRF 融合分）。
+pub fn rrf_fuse(
+    mut primary: Vec<SearchHit>,
+    mut secondary: Vec<SearchHit>,
+    top_k: usize,
+) -> Vec<SearchHit> {
+    use std::collections::HashMap;
+    let k = 60.0;
+    // chunk_id → (融合分, 命中详情)
+    let mut fused: HashMap<i64, (f64, SearchHit)> = HashMap::new();
+    for (rank, hit) in primary.drain(..).enumerate() {
+        fused.insert(hit.chunk_id, (1.0 / (k + rank as f64 + 1.0), hit));
+    }
+    for (rank, hit) in secondary.drain(..).enumerate() {
+        let add = 1.0 / (k + rank as f64 + 1.0);
+        match fused.get_mut(&hit.chunk_id) {
+            Some(entry) => entry.0 += add,
+            None => {
+                fused.insert(hit.chunk_id, (add, hit));
+            }
+        }
+    }
+    let mut out: Vec<(f64, SearchHit)> = fused.into_values().collect();
+    out.sort_by(|a, b| b.0.total_cmp(&a.0));
+    out.truncate(top_k);
+    out.into_iter().map(|(score, mut hit)| {
+        hit.score = score;
+        hit
+    })
+    .collect()
 }
 
 /// LIKE 通配符转义（% _ \）
@@ -197,5 +235,57 @@ mod tests {
         assert_eq!(rows[0].heading, "第一章");
         assert!(rows[0].content.contains("向量检索溯源"));
         assert!(chunks_by_ids(&pool, &[]).await.unwrap().is_empty());
+    }
+
+    // ---- RRF 融合（纯函数） ----
+
+    fn hit(id: i64, title: &str, content: &str, score: f64) -> SearchHit {
+        SearchHit {
+            chunk_id: id,
+            document_id: format!("doc_{id}"),
+            title: title.to_string(),
+            heading: String::new(),
+            seq: id,
+            content: content.to_string(),
+            score,
+        }
+    }
+
+    #[test]
+    fn rrf_boosts_hits_present_in_both_lists() {
+        // chunk 1 两路都第 1（2/61）；chunk 2 只在一路第 2（1/62）
+        let primary = vec![hit(1, "双路", "内容1", 0.9), hit(2, "单路", "内容2", 0.8)];
+        let secondary = vec![hit(1, "双路", "内容1", -5.0)];
+        let fused = rrf_fuse(primary, secondary, 10);
+        assert_eq!(fused.len(), 2);
+        assert_eq!(fused[0].chunk_id, 1, "两路皆中应排第一");
+        assert!(
+            (fused[0].score - 2.0 / 61.0).abs() < 1e-9,
+            "双路第 1 = 2/61: {}",
+            fused[0].score
+        );
+        assert!(
+            (fused[1].score - 1.0 / 62.0).abs() < 1e-9,
+            "单路第 2 = 1/62: {}",
+            fused[1].score
+        );
+        assert!(
+            fused[0].score > fused[1].score,
+            "RRF 不应被量纲差异带偏（bm25 为负值也如此）"
+        );
+    }
+
+    #[test]
+    fn rrf_prefers_primary_details_and_truncates() {
+        let primary = vec![hit(1, "P标题", "P内容", 0.9)];
+        let secondary = vec![hit(1, "S标题", "S内容", -2.0), hit(2, "S2", "S2内容", -1.0)];
+        let fused = rrf_fuse(primary, secondary, 1);
+        assert_eq!(fused.len(), 1, "应截断到 top_k");
+        assert_eq!(fused[0].chunk_id, 1);
+        assert_eq!(fused[0].title, "P标题", "详情应优先取 primary");
+        assert_eq!(fused[0].content, "P内容");
+        assert!(fused[0].score > 0.0, "融合分恒正: {}", fused[0].score);
+        let empty = rrf_fuse(Vec::new(), Vec::new(), 5);
+        assert!(empty.is_empty(), "两路皆空返回空");
     }
 }

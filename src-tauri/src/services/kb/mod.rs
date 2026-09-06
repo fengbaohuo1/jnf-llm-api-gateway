@@ -8,6 +8,7 @@
 //! - `index.rs`：HNSW 索引封装（usearch）+ 向量 BLOB 转换
 //! - `indexing.rs`：异步任务管道（embed + 索引构建、进度、中断恢复）
 //! - `search.rs`：关键词检索（FTS5/BM25）与溯源组装
+//! - `rag.rs`：RAG 问答（问答渠道绑定 / 会话消息 / hybrid 引用上下文）
 //!
 //! 服务实例持有每个库的**内存 HNSW 缓存**（`indexes` map）：启动时按
 //! index_meta（ready）加载，检索命令经 `as_any().downcast_ref` 取回实例调用
@@ -20,6 +21,7 @@ mod hnsw;
 pub mod index;
 pub mod indexing;
 mod parse;
+pub mod rag;
 mod schema;
 pub mod search;
 
