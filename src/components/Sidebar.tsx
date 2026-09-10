@@ -8,6 +8,7 @@ import {
   Shield,
   Settings,
   Database,
+  Plug,
 } from "lucide-react";
 
 const navItems = [
@@ -18,6 +19,7 @@ const navItems = [
   { to: "/logs", label: "日志", icon: ScrollText },
   { to: "/security", label: "安全", icon: Shield },
   { to: "/kb", label: "知识库", icon: Database },
+  { to: "/mcp", label: "MCP 服务", icon: Plug },
   { to: "/settings", label: "设置", icon: Settings },
 ];
 

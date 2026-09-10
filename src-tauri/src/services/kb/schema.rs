@@ -16,6 +16,9 @@
 //!   解耦：embedding 渠道可能无 chat 能力（如本地 Embedder），问答渠道可能无
 //!   embedding 能力（如 DeepSeek）；两者逻辑引用 channels，删除策略各自独立。
 //!   会话/消息表（0001 预留）与 kb_sessions → kb_conversations 级联已就绪。
+//! - **0005**：关键词双索引——trigram 表补 heading/title 列；新增 bigram 表
+//!   （unicode61 + 应用层 2 字滑窗）承载中文检索；kb_index_meta.text_version
+//!   记录嵌入文本配方版本（不一致需重建索引）。
 //!
 //! 迁移不可修改：已应用版本由框架记录并跳过，schema 演进只能追加新版本。
 
@@ -162,6 +165,37 @@ pub(crate) static KB_SCHEMA: &[(&'static str, &'static [&'static str])] = &[
             // RAG 问答绑定：与 embedding 绑定解耦（问答模型由适配器 chat 调用）
             "ALTER TABLE kb_knowledge_bases ADD COLUMN answer_channel_id TEXT",
             "ALTER TABLE kb_knowledge_bases ADD COLUMN answer_model TEXT",
+        ],
+    ),
+    (
+        "0005_kb_search_tuning",
+        &[
+            // 关键词双索引之一：trigram 表补齐 heading/title 列（标题/章节可检索），
+            // 只服务非 CJK ≥3 字符词元的子串匹配。FTS5 虚拟表不支持 ALTER，
+            // 故 DROP + 重建 + 回填（非 external content，需显式搬一次）。
+            "DROP TABLE IF EXISTS kb_chunks_fts",
+            "CREATE VIRTUAL TABLE kb_chunks_fts USING fts5(
+                content,
+                heading,
+                title,
+                tokenize = 'trigram'
+            )",
+            "INSERT INTO kb_chunks_fts (rowid, content, heading, title)
+             SELECT c.id, c.content, c.heading, d.title
+             FROM kb_chunks c JOIN kb_documents d ON d.id = c.document_id",
+            // 关键词双索引之二：bigram 表（unicode61 + 应用层 2 字滑窗预处理），
+            // 承载中文主力检索（任意 ≥2 字符查询）。bigram 串无法用 SQL 生成，
+            // 旧数据由 data::ensure_bigram_index 在服务启动时回填。
+            "DROP TABLE IF EXISTS kb_chunks_bg",
+            "CREATE VIRTUAL TABLE kb_chunks_bg USING fts5(
+                content_bg,
+                heading_bg,
+                title_bg,
+                tokenize = 'unicode61'
+            )",
+            // 嵌入文本配方版本（title+heading+content 前缀）；与常量不一致说明
+            // 索引向量由旧配方构建，检索层要求重建，避免同一库里两套语义混用。
+            "ALTER TABLE kb_index_meta ADD COLUMN text_version INTEGER NOT NULL DEFAULT 0",
         ],
     ),
 ];

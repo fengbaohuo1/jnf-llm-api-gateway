@@ -1,6 +1,7 @@
 pub mod channels;
 pub mod kb;
 pub mod keys;
+pub mod mcp;
 pub mod requests;
 pub mod security;
 pub mod services;

@@ -21,6 +21,7 @@ use crate::services::kb::rag::{normalize_question, AskOutcome};
 use crate::services::kb::search::SearchHit;
 use crate::services::kb::{indexing, KnowledgeBaseService};
 
+use super::config::{McpConfig, ToolKind};
 use super::protocol::ToolSet;
 
 /// 工具执行上下文：连接池 + 内存索引缓存实例（懒加载，与 kb 服务同构）+ 索引目录
@@ -50,6 +51,111 @@ struct ToolDef {
     required: &'static [&'static str],
     /// 是否记 admin 审计（写操作与问答记，只读查询不记）
     audit: bool,
+}
+
+/// 风险类别（单一来源：按工具名归类，避免 13 处重复声明）
+pub fn kind_of(name: &str) -> ToolKind {
+    match name {
+        "kb_delete_base" | "kb_delete_document" => ToolKind::Dangerous,
+        "kb_create_base" | "kb_update_base" | "kb_import_text" | "kb_import_file"
+        | "kb_build_index" => ToolKind::Write,
+        _ => ToolKind::Read,
+    }
+}
+
+/// 是否会产生外部费用（调用上游模型 / embedding 渠道）
+pub fn is_costly(name: &str) -> bool {
+    matches!(name, "kb_ask" | "kb_build_index")
+}
+
+/// 参数说明（前端工具详情表用；从 inputSchema 提取）
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpParamInfo {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub type_name: String,
+    pub required: bool,
+    pub description: String,
+    pub enum_values: Vec<String>,
+}
+
+/// 工具完整信息（MCP 服务页数据源）
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpToolInfo {
+    pub name: String,
+    pub description: String,
+    pub kind: ToolKind,
+    pub kind_label: String,
+    /// 会产生外部费用（问答/建索引）
+    pub costly: bool,
+    /// 是否记入管理审计
+    pub audit: bool,
+    pub required: Vec<String>,
+    pub params: Vec<McpParamInfo>,
+    /// 原始 inputSchema（前端展示/复制）
+    pub schema: Value,
+    /// 当前是否启用（设置 services.mcp.tools.<name>.enabled）
+    pub enabled: bool,
+}
+
+/// 全部工具名（命令层校验用）
+pub fn known_names() -> Vec<&'static str> {
+    defs().into_iter().map(|d| d.name).collect()
+}
+
+/// 工具清单（含风险类别、参数说明与启用状态）
+pub fn tool_infos(cfg: &McpConfig) -> Vec<McpToolInfo> {
+    defs()
+        .into_iter()
+        .map(|d| {
+            let kind = kind_of(d.name);
+            let props = d.schema.get("properties").and_then(Value::as_object);
+            let params = props
+                .map(|m| {
+                    m.iter()
+                        .map(|(name, v)| McpParamInfo {
+                            name: name.clone(),
+                            type_name: v
+                                .get("type")
+                                .and_then(Value::as_str)
+                                .unwrap_or("any")
+                                .to_string(),
+                            required: d.required.contains(&name.as_str()),
+                            description: v
+                                .get("description")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string(),
+                            enum_values: v
+                                .get("enum")
+                                .and_then(Value::as_array)
+                                .map(|a| {
+                                    a.iter()
+                                        .filter_map(Value::as_str)
+                                        .map(str::to_string)
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            McpToolInfo {
+                name: d.name.to_string(),
+                description: d.description.to_string(),
+                kind,
+                kind_label: kind.label().to_string(),
+                costly: is_costly(d.name),
+                audit: d.audit,
+                required: d.required.iter().map(|s| s.to_string()).collect(),
+                params,
+                schema: d.schema,
+                enabled: cfg.tool_enabled(d.name),
+            }
+        })
+        .collect()
 }
 
 fn schema(props: Value, required: &'static [&'static str]) -> Value {
@@ -246,10 +352,19 @@ impl ToolSet for Tools {
         defs()
             .into_iter()
             .map(|d| {
+                let kind = kind_of(d.name);
                 json!({
                     "name": d.name,
                     "description": d.description,
                     "inputSchema": d.schema,
+                    // MCP 规范注解：让外部客户端也能感知风险
+                    "annotations": {
+                        "title": d.name,
+                        "readOnlyHint": kind == ToolKind::Read,
+                        "destructiveHint": kind == ToolKind::Dangerous,
+                        "idempotentHint": false,
+                        "openWorldHint": is_costly(d.name),
+                    }
                 })
             })
             .collect()
@@ -259,6 +374,9 @@ impl ToolSet for Tools {
         let Some(def) = Self::find(name) else {
             return Err(format!("未知工具: {name}"));
         };
+        // 准入：单工具开关 + 只读模式（每次调用实时读设置，改完立即生效）
+        let cfg = McpConfig::load(&self.ctx.pool).await;
+        cfg.check_tool(name, kind_of(name))?;
         validate_args(&def, args)?;
         // 工具级语义校验（confirm 等）
         match name {
@@ -421,6 +539,8 @@ impl Tools {
                             "seq": h.seq,
                             "content": h.content,
                             "score": h.score,
+                            "vecScore": h.vec_score,
+                            "kwScore": h.kw_score,
                         })
                     })
                     .collect();
@@ -573,7 +693,21 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        // 配置读取（services.mcp.*）与准入判定需要 settings 表
+        sqlx::query("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            .execute(&pool)
+            .await
+            .unwrap();
         pool
+    }
+
+    async fn set(pool: &SqlitePool, key: &str, value: &str) {
+        sqlx::query("INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)")
+            .bind(key)
+            .bind(value)
+            .execute(pool)
+            .await
+            .unwrap();
     }
 
     fn new_tools(pool: SqlitePool) -> Tools {
@@ -583,6 +717,72 @@ mod tests {
 
     fn args(v: serde_json::Value) -> serde_json::Value {
         v
+    }
+
+    #[test]
+    fn tool_infos_expose_kind_params_and_required() {
+        let cfg = McpConfig::default();
+        let infos = tool_infos(&cfg);
+        assert_eq!(infos.len(), known_names().len());
+        assert!(infos.iter().all(|t| t.enabled), "缺省全部启用");
+
+        let search = infos.iter().find(|t| t.name == "kb_search").unwrap();
+        assert_eq!(search.kind, ToolKind::Read);
+        assert_eq!(search.kind_label, "只读");
+        assert!(!search.costly && !search.audit);
+        assert_eq!(search.required, vec!["kbId", "query"]);
+        let mode = search.params.iter().find(|p| p.name == "mode").unwrap();
+        assert_eq!(mode.type_name, "string");
+        assert_eq!(mode.enum_values, vec!["keyword", "vector", "hybrid"]);
+        assert!(!mode.required);
+        let kb_id = search.params.iter().find(|p| p.name == "kbId").unwrap();
+        assert!(kb_id.required);
+
+        let del = infos.iter().find(|t| t.name == "kb_delete_base").unwrap();
+        assert_eq!(del.kind, ToolKind::Dangerous);
+        assert!(del.audit, "删除要留痕");
+        let ask = infos.iter().find(|t| t.name == "kb_ask").unwrap();
+        assert!(ask.costly, "问答会调用上游模型，标为有外部费用");
+        let import = infos.iter().find(|t| t.name == "kb_import_file").unwrap();
+        assert_eq!(import.kind, ToolKind::Write);
+
+        // 禁用后信息里的 enabled 立即反映
+        let cfg = McpConfig {
+            disabled_tools: ["kb_search".to_string()].into_iter().collect(),
+            ..McpConfig::default()
+        };
+        let infos = tool_infos(&cfg);
+        assert!(!infos.iter().find(|t| t.name == "kb_search").unwrap().enabled);
+    }
+
+    #[test]
+    fn dangerous_kind_matches_confirm_required_tools() {
+        // 危险类 = 必须显式 confirm 的工具（两者必须同步，防止新增工具漏配）
+        let dangerous: Vec<&str> = known_names()
+            .into_iter()
+            .filter(|n| kind_of(n) == ToolKind::Dangerous)
+            .collect();
+        assert_eq!(dangerous, vec!["kb_delete_base", "kb_delete_document"]);
+    }
+
+    #[tokio::test]
+    async fn disabled_tool_and_read_only_are_enforced_in_run_tool() {
+        let pool = test_pool().await;
+        let tools = new_tools(pool.clone());
+
+        set(&pool, "services.mcp.tools.list_knowledge_bases.enabled", "false").await;
+        let err = tools.run_tool("list_knowledge_bases", &args(json!({}))).await.unwrap_err();
+        assert!(err.contains("禁用"), "{err}");
+
+        set(&pool, "services.mcp.readOnly", "true").await;
+        let err = tools
+            .run_tool("kb_import_text", &args(json!({ "kbId": "kb_x", "title": "t", "text": "x" })))
+            .await
+            .unwrap_err();
+        assert!(err.contains("只读模式"), "{err}");
+        // 只读模式不拦只读工具
+        let r = tools.run_tool("kb_list_documents", &args(json!({ "kbId": "kb_x" }))).await;
+        assert!(r.is_ok() || !r.unwrap_err().contains("只读模式"));
     }
 
     #[tokio::test]

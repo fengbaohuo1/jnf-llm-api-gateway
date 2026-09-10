@@ -495,7 +495,9 @@ function ServicesTab() {
                     {copied ? <CheckCircle2 size={13} className="text-green-600" /> : <Copy size={13} />}
                     {copied ? "已复制" : "复制"}
                   </button>
-                  <span className="text-[11px] text-faint">端口可在设置 services.mcp.port 修改（重启服务生效）</span>
+                  <span className="text-[11px] text-faint">
+                    监听地址、端口、令牌、只读模式与逐工具开关都在「MCP 服务」页配置
+                  </span>
                 </div>
               )}
               {s.status === "failed" && s.error && (

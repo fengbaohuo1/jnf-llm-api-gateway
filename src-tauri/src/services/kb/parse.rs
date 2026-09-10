@@ -93,6 +93,23 @@ pub fn parse_markdown(text: &str) -> Vec<Section> {
                 para_break = false;
                 buf.push_str(&t);
             }
+            // 行内代码（`failover.max_attempts`）与原始 HTML 必须保留为正文：
+            // 配置键、API 名、模型 id 是检索与引用的高价值内容，丢了就等于没导入。
+            Event::Code(t) | Event::InlineHtml(t) | Event::Html(t) => {
+                para_break = false;
+                buf.push_str(&t);
+            }
+            // 段落内换行：软换行按空格处理（避免英文单词粘连），硬换行保留换行
+            Event::SoftBreak => {
+                if !buf.ends_with(['\n', ' ']) {
+                    buf.push(' ');
+                }
+            }
+            Event::HardBreak => {
+                if !buf.ends_with('\n') {
+                    buf.push('\n');
+                }
+            }
             Event::End(TagEnd::Heading(_)) => {
                 in_heading = false;
             }
@@ -359,6 +376,25 @@ mod tests {
                 assert_eq!(l.chars().count(), 50, "段落被切碎: {l:?}");
             }
         }
+    }
+
+    #[test]
+    fn md_inline_code_and_html_survive() {
+        let md = "## 配置\n\n配置项 `failover.max_attempts` 控制转移上限，见 `settings.json`。\n\n<span>保留的 HTML</span>";
+        let sections = parse_markdown(md);
+        assert_eq!(sections.len(), 1);
+        let text = &sections[0].text;
+        assert!(text.contains("failover.max_attempts"), "行内代码不能丢: {text}");
+        assert!(text.contains("settings.json"), "行内代码不能丢: {text}");
+        assert!(text.contains("保留的 HTML"), "原始 HTML 应保留: {text}");
+    }
+
+    #[test]
+    fn md_soft_break_becomes_space_and_hard_break_keeps_newline() {
+        let soft = parse_markdown("段落第一行\n第二行");
+        assert_eq!(soft[0].text, "段落第一行 第二行", "软换行应按空格处理");
+        let hard = parse_markdown("段落第一行  \n第二行");
+        assert_eq!(hard[0].text, "段落第一行\n第二行", "硬换行应保留换行");
     }
 
     #[test]

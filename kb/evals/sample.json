@@ -1,0 +1,74 @@
+[
+  {
+    "question": "网关是怎么把请求转发到上游的？",
+    "expectDocs": ["网关总体架构"]
+  },
+  {
+    "question": "一次请求会经过哪几个阶段？",
+    "expectDocs": ["网关总体架构"]
+  },
+  {
+    "question": "流式请求怎么拿到精确的 token 统计？",
+    "expectDocs": ["网关总体架构"]
+  },
+  {
+    "question": "什么错误会触发故障转移？",
+    "expectDocs": ["故障转移"]
+  },
+  {
+    "question": "4xx 错误会转移到下一个渠道吗？",
+    "expectDocs": ["故障转移"]
+  },
+  {
+    "question": "渠道的优先级和权重是怎么选主渠道的？",
+    "expectDocs": ["故障转移"]
+  },
+  {
+    "question": "安全扫描在请求侧还是响应侧生效？",
+    "expectDocs": ["安全审计"]
+  },
+  {
+    "question": "PDP 有哪几种处置动作？",
+    "expectDocs": ["安全审计"]
+  },
+  {
+    "question": "子串匹配引擎用的什么算法？",
+    "expectDocs": ["安全审计"]
+  },
+  {
+    "question": "缓存命中的 token 怎么计价？",
+    "expectDocs": ["计费"]
+  },
+  {
+    "question": "每日统计里记录了哪几类 token？",
+    "expectDocs": ["计费"]
+  },
+  {
+    "question": "混合检索的融合分是怎么算出来的？",
+    "expectDocs": ["RAG"]
+  },
+  {
+    "question": "文档分块默认多大、重叠多少？",
+    "expectDocs": ["RAG"]
+  },
+  {
+    "question": "索引和文档不一致时会怎么处理？",
+    "expectDocs": ["RAG"]
+  },
+  {
+    "question": "知识库检索结果怎么标引用出处？",
+    "expectDocs": ["RAG"]
+  },
+  {
+    "question": "红烧肉怎么做才好吃？",
+    "expectNoAnswer": true
+  },
+  {
+    "question": "明天股市开盘会涨吗？",
+    "expectNoAnswer": true
+  },
+  {
+    "question": "今天北京的天气如何？",
+    "expectNoAnswer": true
+  }
+]

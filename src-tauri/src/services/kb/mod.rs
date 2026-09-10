@@ -7,8 +7,11 @@
 //! - `embed.rs`：Embedder 抽象（渠道外呼 + Dummy）与库级绑定管理
 //! - `index.rs`：HNSW 索引封装（usearch）+ 向量 BLOB 转换
 //! - `indexing.rs`：异步任务管道（embed + 索引构建、进度、中断恢复）
-//! - `search.rs`：关键词检索（FTS5/BM25）与溯源组装
-//! - `rag.rs`：RAG 问答（问答渠道绑定 / 会话消息 / hybrid 引用上下文）
+//! - `search.rs`：关键词检索（bigram + trigram 双索引）与溯源组装、RRF 融合、重排
+//! - `tokenize.rs`：查询分词与 bigram 预处理（纯函数）
+//! - `retrieve.rs`：问答检索策略层（阈值 / 去重 / 邻居扩展 / 参数配置）
+//! - `eval.rs`：检索评测（recall@k / MRR / 拒答正确率）
+//! - `rag.rs`：RAG 问答（问答渠道绑定 / 会话消息 / 引用上下文）
 //!
 //! 服务实例持有每个库的**内存 HNSW 缓存**（`indexes` map）：启动时按
 //! index_meta（ready）加载，检索命令经 `as_any().downcast_ref` 取回实例调用
@@ -17,13 +20,16 @@
 
 pub mod data;
 pub mod embed;
+pub mod eval;
 mod hnsw;
 pub mod index;
 pub mod indexing;
 mod parse;
 pub mod rag;
+pub mod retrieve;
 pub(crate) mod schema;
 pub mod search;
+pub(crate) mod tokenize;
 
 use std::any::Any;
 use std::collections::HashMap;
@@ -110,6 +116,14 @@ impl KnowledgeBaseService {
                 meta.chunk_count, actual
             ));
         }
+        // 嵌入文本配方版本：旧配方（无标题/章节前缀）的向量与当前语义不一致
+        if meta.text_version != indexing::EMBED_TEXT_VERSION {
+            return Err(format!(
+                "向量索引由旧版嵌入文本配方构建（v{}，当前 v{}），请重建索引",
+                meta.text_version,
+                indexing::EMBED_TEXT_VERSION
+            ));
+        }
         let ix = self.ensure_loaded(kb_id, &meta)?;
         let raw = ix.search(&query_vec, top_k.clamp(1, 100))?;
         if raw.is_empty() {
@@ -121,6 +135,7 @@ impl KnowledgeBaseService {
         let mut hits = Vec::with_capacity(raw.len());
         for (id, dist) in raw {
             if let Some(r) = rows.iter().find(|r| r.id == id) {
+                let cos = (1.0 - dist as f64).clamp(0.0, 1.0);
                 hits.push(search::SearchHit {
                     chunk_id: r.id,
                     document_id: r.document_id.clone(),
@@ -128,7 +143,9 @@ impl KnowledgeBaseService {
                     heading: r.heading.clone(),
                     seq: r.seq,
                     content: r.content.clone(),
-                    score: (1.0 - dist as f64).clamp(0.0, 1.0),
+                    score: cos,
+                    vec_score: Some(cos),
+                    kw_score: None,
                 });
             }
         }
@@ -138,6 +155,8 @@ impl KnowledgeBaseService {
     /// 统一检索入口（keyword | vector | hybrid）：命令层与 MCP 共用一套实现，
     /// 避免两处维护不同的向量化/融合逻辑。vector/hybrid 前置校验与
     /// [`Self::search_vector`] 相同（严格报错，不做问答式降级）。
+    /// RRF 权重用默认值；问答策略层（`retrieve.rs`）用 [`Self::search_any_with`]
+    /// 传入配置值。
     pub async fn search_any(
         &self,
         pool: &sqlx::SqlitePool,
@@ -145,6 +164,27 @@ impl KnowledgeBaseService {
         query: &str,
         mode: &str,
         top_k: usize,
+    ) -> Result<Vec<search::SearchHit>, String> {
+        self.search_any_with(
+            pool,
+            kb_id,
+            query,
+            mode,
+            top_k,
+            (retrieve::DEFAULT_RRF_W_VECTOR, retrieve::DEFAULT_RRF_W_KEYWORD),
+        )
+        .await
+    }
+
+    /// 同 [`Self::search_any`]，但可指定 RRF 权重 `(向量路, 关键词路)`。
+    pub async fn search_any_with(
+        &self,
+        pool: &sqlx::SqlitePool,
+        kb_id: &str,
+        query: &str,
+        mode: &str,
+        top_k: usize,
+        weights: (f64, f64),
     ) -> Result<Vec<search::SearchHit>, String> {
         let top_k = top_k.clamp(1, 100);
         match mode {
@@ -159,7 +199,7 @@ impl KnowledgeBaseService {
                 let fetch_k = (top_k * 5).min(100);
                 let kw = search::search_keyword(pool, kb_id, query, fetch_k).await?;
                 let vec = self.search_vector(pool, kb_id, v, fetch_k).await?;
-                Ok(search::rrf_fuse(kw, vec, top_k))
+                Ok(search::rrf_fuse(vec, kw, top_k, weights.0, weights.1))
             }
             other => Err(format!("未知检索模式: {other}（支持 keyword / vector / hybrid）")),
         }
@@ -208,6 +248,12 @@ impl Service for KnowledgeBaseService {
     async fn init(&self, ctx: &ServiceContext) -> Result<(), String> {
         // 中断的任务标记 failed（进程退出残留）
         indexing::recover_interrupted_tasks(&ctx.pool).await;
+        // bigram 关键词索引回填（迁移只建空表；bigram 串无法用 SQL 生成）
+        match data::ensure_bigram_index(&ctx.pool).await {
+            Ok(0) => {}
+            Ok(n) => eprintln!("[kb] bigram 关键词索引已回填 {n} 行"),
+            Err(e) => eprintln!("[kb] bigram 关键词索引回填失败（2 字词检索将退化为 LIKE）: {e}"),
+        }
         // 加载全部 ready 索引到内存（单个失败仅告警，不阻塞启动）
         let metas = indexing::list_ready_index_metas(&ctx.pool)
             .await

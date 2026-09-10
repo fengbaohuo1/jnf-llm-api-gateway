@@ -6,6 +6,7 @@ use tauri::State;
 use crate::commands::DbState;
 use crate::services::kb::data::{self, KbBase, KbChunk, KbDocument};
 use crate::services::kb::embed::{self};
+use crate::services::kb::eval::{self, EvalReport};
 use crate::services::kb::rag::{self, ChatReply, KbMessage, KbSession};
 use crate::services::kb::search::SearchHit;
 use crate::services::kb::{indexing, KnowledgeBaseService};
@@ -282,4 +283,35 @@ pub async fn kb_chat(
         .downcast_ref::<KnowledgeBaseService>()
         .ok_or("知识库服务类型异常")?;
     kb.chat(pool(&state), &session_id, &question).await
+}
+
+// ---- 检索评测 ----
+
+/// 跑检索评测：读取 JSON 用例集，按问答检索路径（重排 + 阈值 + 邻居扩展）
+/// 计算 recall@k / MRR / 拒答正确率。`mode` 缺省 hybrid（需 embedding 绑定），
+/// 纯关键词库用 keyword 可离线跑。
+#[tauri::command]
+pub async fn kb_eval(
+    state: State<'_, DbState>,
+    registry: State<'_, ServiceRegistry>,
+    kb_id: String,
+    cases_path: String,
+    mode: Option<String>,
+    top_k: Option<i64>,
+) -> Result<EvalReport, String> {
+    let svc = registry.get("kb").ok_or("知识库服务不可用")?.clone();
+    let kb: &KnowledgeBaseService = svc
+        .as_any()
+        .downcast_ref::<KnowledgeBaseService>()
+        .ok_or("知识库服务类型异常")?;
+    let cases = eval::load_cases(&cases_path)?;
+    eval::run_eval(
+        kb,
+        pool(&state),
+        &kb_id,
+        &cases,
+        mode.as_deref().unwrap_or("hybrid"),
+        top_k.unwrap_or(4) as usize,
+    )
+    .await
 }

@@ -235,6 +235,17 @@ pub fn run() {
             commands::kb::kb_delete_session,
             commands::kb::kb_list_messages,
             commands::kb::kb_chat,
+            // knowledge base（检索评测）
+            commands::kb::kb_eval,
+            // MCP 服务管理
+            commands::mcp::mcp_status,
+            commands::mcp::mcp_list_tools,
+            commands::mcp::mcp_set_tool_enabled,
+            commands::mcp::mcp_save_config,
+            commands::mcp::mcp_rotate_token,
+            commands::mcp::mcp_clear_token,
+            commands::mcp::mcp_list_calls,
+            commands::mcp::mcp_call_tool,
             // daily stats
             commands::stats::list_daily_stats,
             commands::stats::today_stats,

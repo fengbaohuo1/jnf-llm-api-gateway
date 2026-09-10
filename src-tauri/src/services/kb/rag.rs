@@ -1,5 +1,5 @@
-//! RAG 问答：绑定 → 会话 → 检索（hybrid，索引不可用时降级关键词）→ 引用
-//! 上下文 → 渠道 chat（复用适配器）→ user/assistant 成对落库。
+//! RAG 问答：绑定 → 会话 → 检索（策略层见 `retrieve.rs`）→ 引用上下文
+//! → 渠道 chat（复用适配器）→ user/assistant 成对落库。
 //!
 //! 关键决策：
 //! - **问答绑定与 embedding 绑定解耦**（answer_channel_id/answer_model，
@@ -7,10 +7,12 @@
 //!   检索仍走 embedding 绑定（hybrid 时才需要，缺失即降级关键词）；
 //! - **成功才落库**：渠道调用失败不写任何行，前端可安全重发（避免半截会话）；
 //! - 引用溯源：正文以 `[n]` 编号对应 `assistant.sources` JSON，可逐条跳转文档；
+//! - 检索策略（RRF 权重、相关度阈值、每文档去重、邻居扩展）全部在
+//!   `retrieve.rs`，参数由 settings 覆盖；
 //! - 用量记 `kb_conversations.tokens_used`（不经代理转发，不进 requests 记账表）；
 //! - 问答内容不过安全脱敏引擎：知识库是本地自有内容，位于信任边界内
 //!   （安全引擎聚焦代理流量的外部输入/输出）。
-//! - 明确不做：流式（前端轮再做）、文档过滤/rerank/MMR、历史摘要。
+//! - 明确不做：流式（前端轮再做）、rerank 模型、历史摘要。
 
 use std::time::Instant;
 
@@ -21,7 +23,8 @@ use crate::adapters::{create_adapter, ChatMessage, ChatRequest};
 use crate::commands::util::{new_id, now_iso};
 
 use super::data::{self, KbBase};
-use super::search::{self, SearchHit};
+use super::retrieve;
+use super::search::SearchHit;
 use super::KnowledgeBaseService;
 
 // ---- 常量（上下文组装预算与检索档位）----
@@ -39,8 +42,6 @@ const CHUNK_EXCERPT_MAX_CHARS: usize = 1500;
 const HISTORY_LIMIT: usize = 6;
 /// 历史消息单条内容截断（防超大答案撑爆上下文）
 const HISTORY_MSG_MAX_CHARS: usize = 2000;
-/// 最终进上下文的命中数
-const RETRIEVAL_TOP_K: usize = 4;
 /// 单问字符上限（超出截断）
 const MAX_QUESTION_CHARS: usize = 4096;
 /// 会话自动标题字符上限
@@ -514,8 +515,9 @@ impl KnowledgeBaseService {
         let adapter = create_adapter(&ctype, &base_url, &api_key)
             .map_err(|e| format!("问答渠道配置错误: {e}"))?;
 
-        // 检索上下文（hybrid → 降级关键词）
-        let hits = self.retrieve_for_chat(pool, kb_id, question).await?;
+        // 检索上下文（策略层：重排 / 阈值 / 邻居扩展；hybrid 不可用降级关键词）
+        let cfg = retrieve::RetrievalConfig::load(pool).await;
+        let hits = retrieve::retrieve_for_chat(self, pool, kb_id, question, &cfg).await?;
         let context = build_context(&hits, CONTEXT_MAX_CHARS);
 
         // 组装 messages：system + 调用方历史 + 当前问题（带引用）
@@ -566,27 +568,6 @@ impl KnowledgeBaseService {
         })
     }
 
-    /// 问答用检索：hybrid（关键词 + 向量 RRF 融合）；embedding 绑定缺失 /
-    /// 索引未就绪或不同步 / 向量化失败时**静默降级关键词**（问答容错，
-    /// 检索命令层保持严格报错）。关键词失败视为数据层故障，直接上抛。
-    async fn retrieve_for_chat(
-        &self,
-        pool: &SqlitePool,
-        kb_id: &str,
-        question: &str,
-    ) -> Result<Vec<SearchHit>, String> {
-        match self
-            .search_any(pool, kb_id, question, "hybrid", RETRIEVAL_TOP_K)
-            .await
-        {
-            Ok(hits) => Ok(hits),
-            Err(e) => {
-                eprintln!("[kb] 问答 hybrid 检索不可用，降级关键词检索: {e}");
-                let hits = search::search_keyword(pool, kb_id, question, RETRIEVAL_TOP_K).await?;
-                Ok(hits)
-            }
-        }
-    }
 }
 
 /// 事务内插入一条会话消息（id 由调用方分配前缀 msg）
@@ -768,6 +749,8 @@ mod tests {
             seq: id,
             content: content.to_string(),
             score: 1.0,
+            vec_score: None,
+            kw_score: None,
         }
     }
 

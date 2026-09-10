@@ -5,8 +5,8 @@
 //! - 导入是**两阶段**：文档行先以 `importing` 落库（导入中状态可见），分块与全文
 //!   索引入事务写成功后置 `ready`；失败回滚并补写 `failed` + 错误原因
 //!   （进程在阶段间崩溃会残留 importing 行，属已知边界，启动清理后续做）；
-//! - 全文索引（kb_chunks_fts）无外键：删除文档/知识库时先在同一事务内删其
-//!   rowid，再删主表行（级联清 chunks），保证不残留孤儿索引行；
+//! - 全文索引（kb_chunks_fts / kb_chunks_bg）无外键：删除文档/知识库时先在同一
+//!   事务内删其 rowid，再删主表行（级联清 chunks），保证不残留孤儿索引行；
 //! - 去重：同知识库内相同内容（SHA-256）拒绝重复导入。
 
 use sqlx::SqlitePool;
@@ -14,6 +14,7 @@ use sqlx::SqlitePool;
 use crate::commands::util::{new_id, now_iso};
 
 use super::parse;
+use super::tokenize;
 
 // ---- 常量与校验范围 ----
 
@@ -222,15 +223,17 @@ pub async fn update_base(
 
 pub async fn delete_base(pool: &SqlitePool, id: &str) -> Result<(), String> {
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-    // FTS 无外键：先清本库全部 chunk 的全文行，再删库（级联文档/分块）
-    sqlx::query(
-        "DELETE FROM kb_chunks_fts WHERE rowid IN (SELECT c.id FROM kb_chunks c \
-         JOIN kb_documents d ON d.id = c.document_id WHERE d.kb_id = ?1)",
-    )
-    .bind(id)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| format!("清理全文索引失败: {e}"))?;
+    // FTS 无外键：先清本库全部 chunk 的全文行（两张索引表），再删库（级联文档/分块）
+    for table in ["kb_chunks_fts", "kb_chunks_bg"] {
+        sqlx::query(&format!(
+            "DELETE FROM {table} WHERE rowid IN (SELECT c.id FROM kb_chunks c \
+             JOIN kb_documents d ON d.id = c.document_id WHERE d.kb_id = ?1)"
+        ))
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("清理全文索引失败: {e}"))?;
+    }
     let r = sqlx::query("DELETE FROM kb_knowledge_bases WHERE id = ?1")
         .bind(id)
         .execute(&mut *tx)
@@ -268,14 +271,16 @@ pub async fn list_chunks(pool: &SqlitePool, document_id: &str) -> Result<Vec<KbC
 pub async fn delete_document(pool: &SqlitePool, document_id: &str) -> Result<(), String> {
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
     // 先删全文行（chunks 级联删除后子查询会查不到，顺序不可反）
-    sqlx::query(
-        "DELETE FROM kb_chunks_fts WHERE rowid IN \
-         (SELECT id FROM kb_chunks WHERE document_id = ?1)",
-    )
-    .bind(document_id)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| format!("清理全文索引失败: {e}"))?;
+    for table in ["kb_chunks_fts", "kb_chunks_bg"] {
+        sqlx::query(&format!(
+            "DELETE FROM {table} WHERE rowid IN \
+             (SELECT id FROM kb_chunks WHERE document_id = ?1)"
+        ))
+        .bind(document_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("清理全文索引失败: {e}"))?;
+    }
     let r = sqlx::query("DELETE FROM kb_documents WHERE id = ?1")
         .bind(document_id)
         .execute(&mut *tx)
@@ -433,12 +438,28 @@ async fn import_core(
                     .fetch_one(&mut *tx)
                     .await
                     .map_err(|e| e.to_string())?;
-            sqlx::query("INSERT INTO kb_chunks_fts (rowid, content) VALUES (?1, ?2)")
-                .bind(chunk_id)
-                .bind(&c.content)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| format!("写入全文索引失败: {e}"))?;
+            sqlx::query(
+                "INSERT INTO kb_chunks_fts (rowid, content, heading, title) VALUES (?1,?2,?3,?4)",
+            )
+            .bind(chunk_id)
+            .bind(&c.content)
+            .bind(&c.heading)
+            .bind(title)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("写入全文索引失败: {e}"))?;
+            // bigram 索引（unicode61）：CJK 转 2 字滑窗，英文整词透传
+            sqlx::query(
+                "INSERT INTO kb_chunks_bg (rowid, content_bg, heading_bg, title_bg) \
+                 VALUES (?1,?2,?3,?4)",
+            )
+            .bind(chunk_id)
+            .bind(tokenize::bigram_text(&c.content))
+            .bind(tokenize::bigram_text(&c.heading))
+            .bind(tokenize::bigram_text(title))
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("写入 bigram 索引失败: {e}"))?;
         }
         sqlx::query(
             "UPDATE kb_documents SET status='ready', chunk_count=?1, updated_at=?2 WHERE id=?3",
@@ -509,11 +530,79 @@ pub(crate) async fn read_document(pool: &SqlitePool, id: &str) -> Result<Option<
         .map_err(|e| e.to_string())
 }
 
+// ---- 关键词索引维护 ----
+
+/// bigram 索引是否与分块表一致（不一致时检索层跳过 bigram 路，避免漏召回）
+pub(crate) async fn bigram_index_ready(pool: &SqlitePool) -> bool {
+    let chunks: i64 = sqlx::query_scalar("SELECT count(*) FROM kb_chunks")
+        .fetch_one(pool)
+        .await
+        .unwrap_or(-1);
+    let bg: i64 = sqlx::query_scalar("SELECT count(*) FROM kb_chunks_bg")
+        .fetch_one(pool)
+        .await
+        .unwrap_or(-2);
+    chunks == bg
+}
+
+/// 回填 / 重建 bigram 索引（服务启动时调用，幂等）。
+///
+/// bigram 串无法用 SQL 生成，只能由应用层从 `kb_chunks JOIN kb_documents`
+/// 全量重建（迁移只建空表）。已一致时直接返回 0，不重复写。
+pub(crate) async fn ensure_bigram_index(pool: &SqlitePool) -> Result<usize, String> {
+    let chunks: i64 = sqlx::query_scalar("SELECT count(*) FROM kb_chunks")
+        .fetch_one(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    let bg: i64 = sqlx::query_scalar("SELECT count(*) FROM kb_chunks_bg")
+        .fetch_one(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    if chunks == bg {
+        return Ok(0);
+    }
+    let rows: Vec<(i64, String, String, String)> = sqlx::query_as(
+        "SELECT c.id, c.content, c.heading, d.title FROM kb_chunks c \
+         JOIN kb_documents d ON d.id = c.document_id ORDER BY c.id",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    sqlx::query("DELETE FROM kb_chunks_bg")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    for (id, content, heading, title) in &rows {
+        sqlx::query(
+            "INSERT INTO kb_chunks_bg (rowid, content_bg, heading_bg, title_bg) \
+             VALUES (?1,?2,?3,?4)",
+        )
+        .bind(id)
+        .bind(tokenize::bigram_text(content))
+        .bind(tokenize::bigram_text(heading))
+        .bind(tokenize::bigram_text(title))
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("回填 bigram 索引失败: {e}"))?;
+    }
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(rows.len())
+}
+
 // ---- 全文检索（第 2 步 UI/命令消费；先供内部测试断言同步正确性）----
 
 #[cfg(test)]
 pub(crate) async fn fts_count(pool: &SqlitePool) -> i64 {
     sqlx::query_scalar("SELECT count(*) FROM kb_chunks_fts")
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+pub(crate) async fn bg_count(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM kb_chunks_bg")
         .fetch_one(pool)
         .await
         .unwrap_or(0)
@@ -643,6 +732,37 @@ mod tests {
         assert_eq!(remain, 0, "分块应级联删除");
         assert_eq!(fts_count(&pool).await, 0, "全文行应同步删除");
         assert!(delete_document(&pool, &doc.id).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn bigram_index_syncs_with_chunks_and_backfills() {
+        let pool = test_pool().await;
+        let b = mk_base(&pool).await;
+        let doc = import_text(&pool, &b.id, "网关笔记", "md", SAMPLE_MD).await.unwrap();
+        // 导入即写两张索引表
+        assert_eq!(fts_count(&pool).await, 3);
+        assert_eq!(bg_count(&pool).await, 3);
+        assert!(bigram_index_ready(&pool).await);
+        // 标题进 bigram 索引（2 字词可命中标题）
+        let hit: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM kb_chunks_bg WHERE kb_chunks_bg MATCH ?1")
+                .bind("\"网关\"")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(hit > 0, "标题 bigram 应可检索");
+
+        // 模拟迁移后的旧库：bg 表为空 → 启动回填（幂等）
+        sqlx::query("DELETE FROM kb_chunks_bg").execute(&pool).await.unwrap();
+        assert!(!bigram_index_ready(&pool).await);
+        assert_eq!(ensure_bigram_index(&pool).await.unwrap(), 3, "应回填 3 行");
+        assert!(bigram_index_ready(&pool).await);
+        assert_eq!(ensure_bigram_index(&pool).await.unwrap(), 0, "已一致时不再重建");
+
+        // 删除文档后两张表同步清空
+        delete_document(&pool, &doc.id).await.unwrap();
+        assert_eq!(fts_count(&pool).await, 0);
+        assert_eq!(bg_count(&pool).await, 0);
     }
 
     #[tokio::test]

@@ -203,10 +203,114 @@ export interface SearchHit {
   heading: string;
   seq: number;
   content: string;
+  /** 当前模式的排序分（keyword 为 bm25 负值 / LIKE 负命中数；vector 余弦；hybrid 融合分） */
   score: number;
+  /** 向量路原始余弦相似度（hybrid 且被向量路命中时有值） */
+  vecScore: number | null;
+  /** 关键词路原始分（bm25 或负命中数；两路皆中取更负者） */
+  kwScore: number | null;
 }
 
 export type KbSearchMode = "keyword" | "vector" | "hybrid";
+
+// ---- 检索评测 ----
+
+/** 评测用例（kb/evals/*.json 数组元素） */
+export interface EvalCase {
+  question: string;
+  /** 期望命中的文档标题（任一命中即算召回） */
+  expectDocs?: string[];
+  /** 期望检索为空（无答案问题） */
+  expectNoAnswer?: boolean;
+}
+
+export interface EvalHit {
+  title: string;
+  score: number;
+  vecScore: number | null;
+  kwScore: number | null;
+}
+
+export interface EvalCaseResult {
+  question: string;
+  expectDocs: string[];
+  expectNoAnswer: boolean;
+  matchedRank: number | null;
+  passed: boolean;
+  hits: EvalHit[];
+}
+
+export interface EvalReport {
+  mode: KbSearchMode;
+  topK: number;
+  total: number;
+  answerable: number;
+  recallAtK: number;
+  mrr: number;
+  refuseAccuracy: number;
+  cases: EvalCaseResult[];
+}
+
+// ---- MCP 服务 ----
+
+/** 工具风险类别 */
+export type McpToolKind = "read" | "write" | "dangerous";
+
+export interface McpParamInfo {
+  name: string;
+  type: string;
+  required: boolean;
+  description: string;
+  enumValues: string[];
+}
+
+export interface McpToolInfo {
+  name: string;
+  description: string;
+  kind: McpToolKind;
+  kindLabel: string;
+  /** 会产生外部费用（问答 / 建索引） */
+  costly: boolean;
+  /** 是否记入管理审计 */
+  audit: boolean;
+  required: string[];
+  params: McpParamInfo[];
+  schema: unknown;
+  enabled: boolean;
+}
+
+export interface McpStatus {
+  enabled: boolean;
+  running: boolean;
+  host: string;
+  configuredPort: number;
+  port: number;
+  endpoint: string;
+  tokenSet: boolean;
+  tokenMasked: string | null;
+  readOnly: boolean;
+  toolTotal: number;
+  toolEnabled: number;
+  error: string | null;
+}
+
+export interface McpCall {
+  id: number;
+  method: string;
+  tool: string | null;
+  ok: number;
+  error: string | null;
+  durationMs: number;
+  client: string | null;
+  createdAt: string;
+}
+
+export interface McpCallResult {
+  ok: boolean;
+  result: string | null;
+  error: string | null;
+  durationMs: number;
+}
 
 export interface KbSession {
   id: string;

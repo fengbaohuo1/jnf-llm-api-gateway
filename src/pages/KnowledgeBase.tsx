@@ -33,6 +33,7 @@ import type {
   KbSession,
   KbTask,
   KbIndexStatus,
+  EvalReport,
   SearchHit,
 } from "../types";
 
@@ -1045,8 +1046,11 @@ function SearchTab({
   const modeDesc = MODES.find((m) => m.key === mode)?.desc ?? "";
   const fmtScore = (h: SearchHit) => {
     if (mode === "vector") return `相似度 ${h.score.toFixed(3)}`;
-    if (mode === "keyword") return `bm25 ${h.score.toFixed(2)}`;
-    return `融合分 ${h.score.toFixed(3)}`;
+    if (mode === "keyword") {
+      return h.kwScore !== null ? `bm25 ${h.kwScore.toFixed(2)}` : `关键词分 ${h.score.toFixed(2)}`;
+    }
+    const cos = h.vecScore !== null ? ` · 相似度 ${h.vecScore.toFixed(3)}` : "";
+    return `融合分 ${h.score.toFixed(3)}${cos}`;
   };
 
   return (
@@ -1491,15 +1495,188 @@ function ChatTab({
 }
 
 // ---------------------------------------------------------------------------
+// 评测 Tab：跑 kb/evals/*.json 用例集，看 recall@k / MRR / 拒答正确率
+// ---------------------------------------------------------------------------
+
+function EvalTab({ base }: { base: KnowledgeBase }) {
+  const canVector = base.embeddingChannelId !== null && base.indexStatus === "ready";
+  const [mode, setMode] = useState<KbSearchMode>(canVector ? "hybrid" : "keyword");
+  const [topK, setTopK] = useState(4);
+  const [casesPath, setCasesPath] = useState("");
+  const [report, setReport] = useState<EvalReport | null>(null);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setReport(null);
+    setError(null);
+    setMode(canVector ? "hybrid" : "keyword");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [base.id]);
+
+  const pickFile = async () => {
+    const picked = await open({
+      multiple: false,
+      filters: [{ name: "评测用例 JSON", extensions: ["json"] }],
+    });
+    if (typeof picked === "string") {
+      setCasesPath(picked);
+      setReport(null);
+    }
+  };
+
+  const run = async () => {
+    if (!casesPath || running) return;
+    setRunning(true);
+    setError(null);
+    try {
+      setReport(await api.eval({ kbId: base.id, casesPath, mode, topK }));
+    } catch (e) {
+      setError(errOf(e));
+      setReport(null);
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
+  const fileName = casesPath.split(/[\\/]/).pop() ?? "";
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <p className="text-sm text-sub">
+          用「问题 → 期望文档」用例集跑问答同一条检索链路（重排 + 阈值 + 邻居扩展），
+          输出 recall@{topK} / MRR / 拒答正确率。改检索策略前后跑同一份用例集，用数字判断是否真的变好。
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {MODES.map((m) => (
+            <button
+              key={m.key}
+              onClick={() => {
+                setMode(m.key);
+                setReport(null);
+              }}
+              disabled={m.key !== "keyword" && !canVector}
+              title={m.desc}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                mode === m.key ? "bg-indigo-600 text-white" : "border border-strong text-sub hover:bg-hover"
+              }`}
+            >
+              {m.label}
+            </button>
+          ))}
+          <label className="ml-auto flex items-center gap-1.5 text-xs text-muted">
+            top-k
+            <input
+              type="number"
+              min={1}
+              max={20}
+              value={topK}
+              onChange={(e) => setTopK(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
+              className={`${inputCls} w-20`}
+            />
+          </label>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button variant="secondary" onClick={() => void pickFile()}>
+            <FileText size={14} className="mr-1 inline" /> 选择用例文件
+          </Button>
+          <span className="text-xs text-faint">示例：仓库 kb/evals/sample.json</span>
+          {fileName && (
+            <span className="max-w-[420px] truncate text-xs text-muted" title={casesPath}>
+              {fileName}
+            </span>
+          )}
+          <Button onClick={() => void run()} disabled={!casesPath || running}>
+            {running ? <Loader size={14} className="mr-1 inline animate-spin" /> : null}
+            运行评测
+          </Button>
+          {!canVector && (
+            <span className="text-xs text-faint">未构建向量索引，仅关键词模式可跑</span>
+          )}
+        </div>
+        <ErrBar text={error} />
+      </Card>
+
+      {report && (
+        <>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            {[
+              { label: `recall@${report.topK}`, value: pct(report.recallAtK), sub: `${report.answerable} 条可答用例` },
+              { label: "MRR", value: report.mrr.toFixed(3), sub: "首个期望文档排名倒数均值" },
+              { label: "拒答正确率", value: pct(report.refuseAccuracy), sub: "无答案问题检索为空" },
+              { label: "模式 / 用例", value: report.mode, sub: `共 ${report.total} 条` },
+            ].map((s) => (
+              <Card key={s.label}>
+                <div className="text-xs text-muted">{s.label}</div>
+                <div className="mt-1 text-xl font-semibold text-main">{s.value}</div>
+                <div className="mt-0.5 text-xs text-faint">{s.sub}</div>
+              </Card>
+            ))}
+          </div>
+
+          <Card className="p-0">
+            <div className="border-b border-edge px-4 py-2.5 text-sm font-medium text-main">
+              逐条结果
+            </div>
+            <div className="divide-y divide-edge">
+              {report.cases.map((c, i) => (
+                <div key={i} className="flex items-start gap-3 px-4 py-2.5">
+                  <span
+                    className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-xs font-medium ${
+                      c.passed
+                        ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+                        : "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300"
+                    }`}
+                  >
+                    {c.passed ? "通过" : "未通过"}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm text-main">{c.question}</div>
+                    <div className="mt-0.5 text-xs text-faint">
+                      期望：
+                      {c.expectNoAnswer ? "无答案（检索应为空）" : c.expectDocs.join("、") || "—"}
+                      {c.matchedRank !== null && ` · 命中第 ${c.matchedRank} 条`}
+                    </div>
+                    {c.hits.length > 0 && (
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {c.hits.map((h, j) => (
+                          <span
+                            key={j}
+                            className="rounded bg-inset px-1.5 py-0.5 text-xs text-sub"
+                            title={`融合分 ${h.score.toFixed(4)}${
+                              h.vecScore !== null ? ` · 相似度 ${h.vecScore.toFixed(3)}` : ""
+                            }${h.kwScore !== null ? ` · bm25 ${h.kwScore.toFixed(2)}` : ""}`}
+                          >
+                            {j + 1}. {h.title}
+                            {h.vecScore !== null && ` · ${h.vecScore.toFixed(2)}`}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // 主页面：库列表 + Tab 内容
 // ---------------------------------------------------------------------------
 
-type TabKey = "docs" | "search" | "chat";
+type TabKey = "docs" | "search" | "chat" | "eval";
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "docs", label: "文档与索引" },
   { key: "search", label: "检索" },
   { key: "chat", label: "问答" },
+  { key: "eval", label: "评测" },
 ];
 
 export function KnowledgeBasePage() {
@@ -1768,6 +1945,9 @@ export function KnowledgeBasePage() {
               </div>
               <div className={tab === "chat" ? "" : "hidden"}>
                 <ChatTab base={selected} onOpenBind={() => setBindOpen(true)} openChunk={openChunk} />
+              </div>
+              <div className={tab === "eval" ? "" : "hidden"}>
+                <EvalTab base={selected} />
               </div>
             </>
           )}

@@ -19,6 +19,11 @@ import type {
   KbSession,
   KbMessage,
   ChatReply,
+  EvalReport,
+  McpStatus,
+  McpToolInfo,
+  McpCall,
+  McpCallResult,
 } from "../types";
 
 // 后端命令返回的字段是 camelCase；这里映射回前端结构。
@@ -274,6 +279,29 @@ export const api = {
   listMessages: (sessionId: string) => invoke<KbMessage[]>("kb_list_messages", { sessionId }),
   chat: (input: { sessionId: string; question: string }) =>
     invoke<ChatReply>("kb_chat", { ...input }),
+
+  eval: (input: {
+    kbId: string;
+    casesPath: string;
+    mode?: KbSearchMode;
+    topK?: number;
+  }) => invoke<EvalReport>("kb_eval", { ...input }),
+};
+
+// ---- MCP 服务管理 ----
+
+export const mcpApi = {
+  status: () => invoke<McpStatus>("mcp_status"),
+  listTools: () => invoke<McpToolInfo[]>("mcp_list_tools"),
+  setToolEnabled: (name: string, enabled: boolean) =>
+    invoke<void>("mcp_set_tool_enabled", { name, enabled }),
+  saveConfig: (input: { host: string; port: number; readOnly: boolean }) =>
+    invoke<boolean>("mcp_save_config", { ...input }),
+  rotateToken: () => invoke<string>("mcp_rotate_token"),
+  clearToken: () => invoke<void>("mcp_clear_token"),
+  listCalls: (limit?: number) => invoke<McpCall[]>("mcp_list_calls", { limit: limit ?? 50 }),
+  callTool: (name: string, args: unknown) =>
+    invoke<McpCallResult>("mcp_call_tool", { name, args }),
 };
 
 // ---- raw 类型（与后端 camelCase 对齐）----

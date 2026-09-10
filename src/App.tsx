@@ -8,6 +8,7 @@ import { Logs } from "./pages/Logs";
 import { Security } from "./pages/Security";
 import { Settings } from "./pages/Settings";
 import { KnowledgeBasePage } from "./pages/KnowledgeBase";
+import { Mcp } from "./pages/Mcp";
 
 function App() {
   return (
@@ -23,6 +24,7 @@ function App() {
             <Route path="/logs" element={<Logs />} />
             <Route path="/security" element={<Security />} />
             <Route path="/kb" element={<KnowledgeBasePage />} />
+            <Route path="/mcp" element={<Mcp />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

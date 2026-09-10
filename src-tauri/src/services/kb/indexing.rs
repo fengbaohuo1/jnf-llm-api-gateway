@@ -25,6 +25,26 @@ const BATCH_SIZE: usize = 64;
 /// 单批失败重试次数（含首次共 3 次尝试）
 const MAX_ATTEMPTS: u32 = 3;
 
+/// 嵌入文本配方版本：v1 = `标题 + 章节路径 + 正文`（上下文前缀）。
+/// 写入 `kb_index_meta.text_version`；与检索侧常量不一致时要求重建索引
+/// （旧配方向量没有标题/章节语义，混用会让同一库出现两套语义）。
+pub const EMBED_TEXT_VERSION: i64 = 1;
+
+/// 单块送入 embedding 的文本（存储与展示仍是原始分块内容）
+pub(crate) fn embed_text(title: &str, heading: &str, content: &str) -> String {
+    let mut s = String::new();
+    for part in [title.trim(), heading.trim(), content.trim()] {
+        if part.is_empty() {
+            continue;
+        }
+        if !s.is_empty() {
+            s.push('\n');
+        }
+        s.push_str(part);
+    }
+    s
+}
+
 /// 任务 DTO（前端进度轮询）
 #[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,6 +77,8 @@ pub(crate) struct IndexMetaRow {
     pub status: String,
     #[allow(dead_code)]
     pub error: Option<String>,
+    /// 嵌入文本配方版本（见 [`EMBED_TEXT_VERSION`]）
+    pub text_version: i64,
 }
 
 const TASK_COLS: &str = "id, kb_id, task_type, status, total_items, done_items, progress, \
@@ -165,8 +187,8 @@ pub(crate) async fn read_index_meta(
     kb_id: &str,
 ) -> Result<Option<IndexMetaRow>, String> {
     sqlx::query_as::<_, IndexMetaRow>(
-        "SELECT kb_id, index_type, embedding_dim, chunk_count, index_path, built_at, status, error \
-         FROM kb_index_meta WHERE kb_id = ?1",
+        "SELECT kb_id, index_type, embedding_dim, chunk_count, index_path, built_at, status, \
+         error, text_version FROM kb_index_meta WHERE kb_id = ?1",
     )
     .bind(kb_id)
     .fetch_optional(pool)
@@ -177,8 +199,8 @@ pub(crate) async fn read_index_meta(
 /// 全部 ready 索引（服务启动加载用）
 pub(crate) async fn list_ready_index_metas(pool: &SqlitePool) -> Result<Vec<IndexMetaRow>, String> {
     sqlx::query_as::<_, IndexMetaRow>(
-        "SELECT kb_id, index_type, embedding_dim, chunk_count, index_path, built_at, status, error \
-         FROM kb_index_meta WHERE status = 'ready' ORDER BY built_at",
+        "SELECT kb_id, index_type, embedding_dim, chunk_count, index_path, built_at, status, \
+         error, text_version FROM kb_index_meta WHERE status = 'ready' ORDER BY built_at",
     )
     .fetch_all(pool)
     .await
@@ -247,8 +269,8 @@ pub async fn run_embed_index_task(
             ));
         }
         // 收集缺向量分块（已 embed 的跳过——任务可安全重跑）
-        let pending: Vec<(i64, String)> = sqlx::query_as(
-            "SELECT c.id, c.content FROM kb_chunks c \
+        let pending: Vec<(i64, String, String, String)> = sqlx::query_as(
+            "SELECT c.id, c.content, c.heading, d.title FROM kb_chunks c \
              JOIN kb_documents d ON d.id = c.document_id \
              WHERE d.kb_id = ?1 AND c.embedding IS NULL ORDER BY c.id",
         )
@@ -264,12 +286,16 @@ pub async fn run_embed_index_task(
         let mut batch_no = 0usize;
         for batch in pending.chunks(BATCH_SIZE) {
             batch_no += 1;
-            let texts: Vec<&str> = batch.iter().map(|(_, t)| t.as_str()).collect();
-            let vecs = retry_embed(embedder.as_ref(), &texts).await.map_err(|e| {
+            let texts: Vec<String> = batch
+                .iter()
+                .map(|(_, content, heading, title)| embed_text(title, heading, content))
+                .collect();
+            let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+            let vecs = retry_embed(embedder.as_ref(), &refs).await.map_err(|e| {
                 format!("第 {batch_no} 批（{} 块）embedding 失败: {e}", batch.len())
             })?;
             let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-            for ((id, _), v) in batch.iter().zip(vecs.iter()) {
+            for ((id, _, _, _), v) in batch.iter().zip(vecs.iter()) {
                 sqlx::query("UPDATE kb_chunks SET embedding = ?1 WHERE id = ?2")
                     .bind(super::index::blob_from_vec(v))
                     .bind(id)
@@ -308,15 +334,18 @@ pub async fn run_embed_index_task(
         let now = now_iso();
         sqlx::query(
             "INSERT INTO kb_index_meta (kb_id, index_type, embedding_dim, chunk_count, \
-             index_path, built_at, status, error) VALUES (?1,'hnsw',?2,?3,?4,?5,'ready',NULL) \
+             index_path, built_at, status, error, text_version) \
+             VALUES (?1,'hnsw',?2,?3,?4,?5,'ready',NULL,?6) \
              ON CONFLICT(kb_id) DO UPDATE SET index_type='hnsw', embedding_dim=?2, \
-             chunk_count=?3, index_path=?4, built_at=?5, status='ready', error=NULL",
+             chunk_count=?3, index_path=?4, built_at=?5, status='ready', error=NULL, \
+             text_version=?6",
         )
         .bind(&kb_id)
         .bind(dim as i64)
         .bind(rows.len() as i64)
         .bind(&path)
         .bind(&now)
+        .bind(EMBED_TEXT_VERSION)
         .execute(pool)
         .await
         .map_err(|e| format!("写入索引元数据失败: {e}"))?;
@@ -332,11 +361,19 @@ pub async fn run_embed_index_task(
 
     match &result {
         Ok(()) => {
-            let total = task.total_items.max(0);
+            // 完成时以任务行**当前**进度为准：管道运行中已累加 total/done，
+            // 用启动前读到的快照会把进度覆盖成 0/0（历史 bug）。
+            let cur = read_task(pool, task_id).await?;
+            let total = cur.as_ref().map(|t| t.total_items).unwrap_or(0);
             update_task(pool, task_id, "ready", total, total, None).await?;
         }
         Err(e) => {
-            update_task(pool, task_id, "failed", task.total_items, task.done_items, Some(e)).await?;
+            let cur = read_task(pool, task_id).await?;
+            let (total, done) = cur
+                .as_ref()
+                .map(|t| (t.total_items, t.done_items))
+                .unwrap_or((0, 0));
+            update_task(pool, task_id, "failed", total, done, Some(e)).await?;
             let _ = sqlx::query(
                 "INSERT INTO kb_index_meta (kb_id, index_type, embedding_dim, chunk_count, \
                  index_path, built_at, status, error) VALUES (?1,'hnsw',0,0,NULL,NULL,'failed',?2) \
@@ -417,6 +454,71 @@ mod tests {
         dir
     }
 
+    /// 记录送进 embedding 的文本（验证上下文前缀配方）
+    struct RecordingEmbedder {
+        dims: usize,
+        seen: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Embedder for RecordingEmbedder {
+        fn dimensions(&self) -> usize {
+            self.dims
+        }
+        fn describe(&self) -> String {
+            "recording".to_string()
+        }
+        async fn embed_texts(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, String> {
+            self.seen
+                .lock()
+                .unwrap()
+                .extend(texts.iter().map(|t| t.to_string()));
+            Ok(texts
+                .iter()
+                .map(|t| embed::dummy_vector(t, self.dims))
+                .collect())
+        }
+    }
+
+    #[test]
+    fn embed_text_prefixes_title_and_heading() {
+        assert_eq!(embed_text("标题", "第一章", "正文"), "标题\n第一章\n正文");
+        // 空段跳过，不留空行
+        assert_eq!(embed_text("标题", "", "正文"), "标题\n正文");
+        assert_eq!(embed_text("", "", "正文"), "正文");
+        assert_eq!(embed_text(" 标题 ", "  ", " 正文 "), "标题\n正文");
+    }
+
+    /// 端到端：嵌入文本带标题/章节前缀，索引元数据记录配方版本
+    #[tokio::test]
+    async fn pipeline_embeds_context_prefix_and_records_version() {
+        let pool = test_pool().await;
+        let b = data::create_base(&pool, "前缀库", "", 800, 150).await.unwrap();
+        data::import_text(&pool, &b.id, "网关笔记", "md", "# 第四章 故障转移\n\n上游 5xx 时按序转移。")
+            .await
+            .unwrap();
+        embed::bind_embedding(&pool, &b.id, "ch_mock", "text-embedding-3-small")
+            .await
+            .unwrap();
+        let dir = tmp_index_dir("prefix").await;
+        let task_id = create_task(&pool, &b.id, "embed_index").await.unwrap();
+        let rec = std::sync::Arc::new(RecordingEmbedder {
+            dims: 1536,
+            seen: std::sync::Mutex::new(Vec::new()),
+        });
+        let e: Arc<dyn Embedder> = rec.clone();
+        run_embed_index_task(&pool, &task_id, &dir, Some(e)).await.unwrap();
+
+        let seen = rec.seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 1);
+        assert!(seen[0].starts_with("网关笔记\n第四章 故障转移\n"), "嵌入文本应带标题与章节前缀: {}", seen[0]);
+        assert!(seen[0].contains("上游 5xx 时按序转移"));
+
+        let meta = read_index_meta(&pool, &b.id).await.unwrap().unwrap();
+        assert_eq!(meta.text_version, EMBED_TEXT_VERSION, "应记录嵌入文本配方版本");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// 端到端：绑定 → 导入 → 构建（Dummy）→ 向量检索命中 → 一致性守卫
     #[tokio::test]
     async fn full_pipeline_dummy_embed_and_vector_search() {
@@ -447,6 +549,11 @@ mod tests {
         // 任务 ready、向量全量写回、索引元数据 ready、文件落盘
         let tasks = list_tasks(&pool, &b.id, 10).await.unwrap();
         assert_eq!(tasks[0].status, "ready");
+        assert_eq!(
+            (tasks[0].total_items, tasks[0].done_items, tasks[0].progress),
+            (2, 2, 100),
+            "完成的任务必须保留真实进度（不能覆盖成 0/0）"
+        );
         let remain: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM kb_chunks c JOIN kb_documents d ON d.id = c.document_id \
              WHERE d.kb_id = ?1 AND c.embedding IS NULL",
@@ -462,9 +569,16 @@ mod tests {
         assert_eq!(meta.chunk_count, 2);
         assert!(std::path::Path::new(meta.index_path.as_deref().unwrap()).exists());
 
-        // 向量检索：查询文本与块同文本（Dummy 同文本同向量）→ 应为最近命中
+        // 向量检索：查询向量按同一配方（标题 + 章节 + 正文）生成 → 应为最近命中
         let svc = crate::services::kb::KnowledgeBaseService::default();
-        let query = embed::dummy_vector("机器学习是人工智能的核心分支，研究如何让计算机从数据中自动学习。", 1536);
+        let query = embed::dummy_vector(
+            &embed_text(
+                "机器学习",
+                "",
+                "机器学习是人工智能的核心分支，研究如何让计算机从数据中自动学习。",
+            ),
+            1536,
+        );
         let hits = svc
             .search_vector(&pool, &b.id, query.clone(), 3)
             .await
@@ -513,6 +627,34 @@ mod tests {
             .unwrap();
         assert_eq!(remain, 0, "换绑应清空全部旧向量");
         assert!(read_index_meta(&pool, &b.id).await.unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn stale_embed_text_version_is_rejected() {
+        let pool = test_pool().await;
+        let b = data::create_base(&pool, "版本库", "", 800, 150).await.unwrap();
+        data::import_text(&pool, &b.id, "d", "txt", "旧配方索引校验内容。").await.unwrap();
+        embed::bind_embedding(&pool, &b.id, "ch_mock", "text-embedding-3-small")
+            .await
+            .unwrap();
+        let dir = tmp_index_dir("stale").await;
+        let task_id = create_task(&pool, &b.id, "embed_index").await.unwrap();
+        let e: Arc<dyn Embedder> = Arc::new(embed::DummyEmbedder { dims: 1536 });
+        run_embed_index_task(&pool, &task_id, &dir, Some(e)).await.unwrap();
+
+        // 模拟旧版构建：配方版本回退 → 检索必须明确要求重建，而非静默混用两套语义
+        sqlx::query("UPDATE kb_index_meta SET text_version = 0 WHERE kb_id = ?1")
+            .bind(&b.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let svc = crate::services::kb::KnowledgeBaseService::default();
+        let err = svc
+            .search_vector(&pool, &b.id, vec![0.1; 1536], 3)
+            .await
+            .unwrap_err();
+        assert!(err.contains("重建索引"), "应提示重建: {err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
