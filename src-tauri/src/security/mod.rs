@@ -23,6 +23,8 @@ pub mod rules;
 pub mod substring;
 
 pub use refresh::RefreshScanner;
+// 供代理测试直接构造单引擎扫描器（非测试目标下由 CompositeScanner 使用具体引擎）
+#[allow(unused_imports)]
 pub use rules::RuleScanner;
 
 use serde::Serialize;
@@ -102,6 +104,12 @@ pub enum PolicyDecision {
     Mask,
     /// 拦截（存在 block 规则命中）
     Block,
+}
+
+/// 一组命中记录中的最高风险等级（None = 没有任何命中）。
+/// 请求日志据此记录风险等级，并按 log.store_level 决定是否保存内容明细。
+pub fn max_risk(findings: &[Finding]) -> Option<RiskLevel> {
+    findings.iter().map(|f| f.risk).max()
 }
 
 /// 策略决策：任一规则配置了 block 且命中 → 拦截；否则存在 mask → 脱敏；否则放行。
@@ -195,6 +203,15 @@ mod tests {
             snippet_masked: "[MASKED:r]".into(),
             action: action.into(),
         }
+    }
+
+    #[test]
+    fn max_risk_takes_highest() {
+        assert_eq!(max_risk(&[]), None);
+        assert_eq!(max_risk(&[finding("mask")]), Some(RiskLevel::Medium));
+        let mut high = finding("mask");
+        high.risk = RiskLevel::High;
+        assert_eq!(max_risk(&[finding("record"), high]), Some(RiskLevel::High));
     }
 
     #[test]

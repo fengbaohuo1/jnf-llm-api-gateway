@@ -47,6 +47,8 @@ export interface RequestLog {
   clientUa: string;
   /** 第几次尝试（1 = 主渠道一次成功） */
   attempts: number;
+  /** 请求命中的最高安全风险；none = 无命中（安全扫描关闭时也为 none） */
+  riskLevel: "none" | "low" | "medium" | "high";
   status: number;
   latencyMs: number;
   promptTokens: number; // 输入 token 数（缓存命中率的分母）

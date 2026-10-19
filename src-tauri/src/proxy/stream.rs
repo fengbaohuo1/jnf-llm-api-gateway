@@ -19,8 +19,9 @@ use crate::security::leak::check_leak;
 use crate::security::{decide, Finding, PolicyDecision, RiskLevel, SecurityScanner};
 
 use super::forward::{compute_cost, extract_usage, UsageTokens};
-use super::handlers::record_security_logs;
+use super::handlers::{record_security_logs, risk_label, risk_of};
 use super::protocol::{self, ClientProtocol, StreamTranslator};
+use super::settings::content_allowed;
 use super::{PreparedRequest, ProxyState};
 
 /// SSE 透传：后台任务读取上游字节流 → 行缓冲 → 统计/脱敏 → 按客户端协议翻译 → 转发；流结束记账
@@ -59,6 +60,10 @@ pub(crate) async fn stream_response(
                     if tx.send(Ok(out)).await.is_err() {
                         break; // 客户端已断开
                     }
+                    if splitter.overflow {
+                        stats.finish_failed("SSE 单行超过 1 MiB，已中断连接（上游响应异常）").await;
+                        break;
+                    }
                     if !keep {
                         break; // 安全拦截中断
                     }
@@ -84,19 +89,29 @@ pub(crate) async fn stream_response(
         .into_response()
 }
 
-/// SSE 行缓冲：网络 chunk 可能跨行，累积到完整行再处理
+/// SSE 行缓冲：网络 chunk 可能跨行，累积到完整行再处理。
+/// 单行上限 1 MiB：防御永不发换行的异常上游把缓冲撑爆（超限直接中断流并记账）。
 struct SseLineSplitter {
     buf: Vec<u8>,
+    overflow: bool,
 }
+
+/// 单条 SSE 行最大字节数
+const MAX_SSE_LINE: usize = 1024 * 1024;
 
 impl SseLineSplitter {
     fn new() -> Self {
-        Self { buf: Vec::new() }
+        Self { buf: Vec::new(), overflow: false }
     }
 
-    /// 喂入字节，返回所有完整行（含行尾 \n）
+    /// 喂入字节，返回所有完整行（含行尾 \n）；缓冲超过单行上限时置 overflow 并清空
     fn feed(&mut self, bytes: &[u8]) -> Vec<Vec<u8>> {
         self.buf.extend_from_slice(bytes);
+        if self.buf.len() > MAX_SSE_LINE {
+            self.overflow = true;
+            self.buf.clear();
+            return Vec::new();
+        }
         let mut lines = Vec::new();
         while let Some(pos) = self.buf.iter().position(|&b| b == b'\n') {
             lines.push(self.buf.drain(..=pos).collect());
@@ -140,6 +155,10 @@ struct StreamStats {
     upstream_body: Option<String>,
     /// 流式响应重建器（把 SSE delta 拼回完整响应 JSON 供落库）
     rebuild: Option<SseRebuilder>,
+    /// 内容明细存储级别（全部/低/中/高风险及以上/不存），流结束按最终风险判定
+    log_store_level: String,
+    /// 是否因安全策略中断（用于落库状态与错误信息）
+    blocked: bool,
 }
 
 impl StreamStats {
@@ -192,11 +211,13 @@ impl StreamStats {
             attempts,
             request_body: prepared.request_body.clone(),
             upstream_body: prepared.upstream_body.clone(),
-            rebuild: if prepared.settings.log_content_enabled {
+            rebuild: if prepared.settings.content_possible() {
                 Some(SseRebuilder::default())
             } else {
                 None
             },
+            log_store_level: prepared.settings.log_store_level.clone(),
+            blocked: false,
         }
     }
 
@@ -205,13 +226,15 @@ impl StreamStats {
     async fn process(&mut self, bytes: &[u8], splitter: &mut SseLineSplitter) -> (Bytes, bool) {
         let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
         for line in splitter.feed(bytes) {
-            let Some(payload) = line.strip_prefix(b"data: ") else {
+            // SSE 规范允许 "data:" 后不带空格（如 data:{"id":...}），两种都解析
+            let Some(rest) = line.strip_prefix(b"data:") else {
                 // 非 data 行：OpenAI 透传；其他协议丢弃（客户端不认上游的 event: 行）
                 if self.proto == ClientProtocol::OpenAi {
                     out.extend_from_slice(&line);
                 }
                 continue;
             };
+            let payload = rest.strip_prefix(b" ").unwrap_or(rest);
             if payload.trim_ascii() == b"[DONE]" {
                 if self.proto == ClientProtocol::OpenAi {
                     out.extend_from_slice(&line);
@@ -235,34 +258,71 @@ impl StreamStats {
                 self.exact_usage = Some(extract_usage(Some(usage)));
             }
 
-            // delta 内容：字符统计 + 安全扫描/脱敏 + 上下文泄露比对
-            if let Some(content) = event.pointer_mut("/choices/0/delta/content") {
-                if let serde_json::Value::String(s) = content {
-                    let (a, b) = count_chars(s);
-                    self.completion_chars.0 += a;
-                    self.completion_chars.1 += b;
-                    if self.security_enabled {
-                        let result = self.scanner.scan(s).await;
-                        let blocked = (self.security_mode == "block" && result.risk >= RiskLevel::High)
-                            || decide(&result.findings) == PolicyDecision::Block;
-                        self.response_findings.extend(result.findings);
-                        if let Some(leak) = check_leak(s, &self.request_secrets) {
-                            self.response_findings.push(leak);
-                        }
-                        if blocked {
-                            match &self.translator {
-                                Some(t) => out.extend_from_slice(&t.error_event(
-                                    "安全策略拦截：响应包含高风险内容，已中断",
-                                )),
-                                None => out.extend_from_slice(&protocol::openai_error_event(
-                                    "安全策略拦截：响应包含高风险内容，已中断",
-                                )),
+            // 所有 choices 的增量：正文 / 工具调用参数都做字符统计 + 扫描脱敏 + 泄露比对
+            let mut blocked_now = false;
+            if let Some(choices) = event.get_mut("choices").and_then(|c| c.as_array_mut()) {
+                for choice in choices.iter_mut() {
+                    if let Some(content) = choice.pointer_mut("/delta/content") {
+                        if let Value::String(s) = content {
+                            let (a, b) = count_chars(s);
+                            self.completion_chars.0 += a;
+                            self.completion_chars.1 += b;
+                            if self.security_enabled {
+                                let result = self.scanner.scan(s).await;
+                                self.response_findings.extend(result.findings.clone());
+                                if let Some(leak) = check_leak(s, &self.request_secrets) {
+                                    self.response_findings.push(leak);
+                                }
+                                if (self.security_mode == "block" && result.risk >= RiskLevel::High)
+                                    || decide(&result.findings) == PolicyDecision::Block
+                                {
+                                    blocked_now = true;
+                                }
+                                *s = result.sanitized;
                             }
-                            return (Bytes::from(out), false);
                         }
-                        *s = result.sanitized;
+                    }
+                    // 工具调用参数（流式分片）：同样扫描脱敏
+                    if let Some(tcs) = choice
+                        .pointer_mut("/delta/tool_calls")
+                        .and_then(|t| t.as_array_mut())
+                    {
+                        for tc in tcs.iter_mut() {
+                            let Some(args) = tc.pointer_mut("/function/arguments") else {
+                                continue;
+                            };
+                            let Value::String(s) = args else {
+                                continue;
+                            };
+                            if !self.security_enabled {
+                                continue;
+                            }
+                            let result = self.scanner.scan(s).await;
+                            self.response_findings.extend(result.findings.clone());
+                            if let Some(leak) = check_leak(s, &self.request_secrets) {
+                                self.response_findings.push(leak);
+                            }
+                            if (self.security_mode == "block" && result.risk >= RiskLevel::High)
+                                || decide(&result.findings) == PolicyDecision::Block
+                            {
+                                blocked_now = true;
+                            }
+                            *s = result.sanitized;
+                        }
                     }
                 }
+            }
+            if blocked_now {
+                self.blocked = true;
+                match &self.translator {
+                    Some(t) => out.extend_from_slice(&t.error_event(
+                        "安全策略拦截：响应包含高风险内容，已中断",
+                    )),
+                    None => out.extend_from_slice(&protocol::openai_error_event(
+                        "安全策略拦截：响应包含高风险内容，已中断",
+                    )),
+                }
+                return (Bytes::from(out), false);
             }
 
             // 内容记录：把脱敏后的上游事件喂给重建器（客户端协议无关——上游恒为 OpenAI 格式）
@@ -285,9 +345,17 @@ impl StreamStats {
         (Bytes::from(out), true)
     }
 
-    /// 流正常结束：记账（status=1）
+    /// 流正常结束：记账（status=1）；安全拦截中断时记 status=0 + 原因
     async fn finish_ok(&mut self) {
-        self.finish(1, None).await;
+        if self.blocked {
+            self.finish(
+                0,
+                Some("安全策略拦截：响应包含高风险内容，已中断（response_security_blocked）".to_string()),
+            )
+            .await;
+        } else {
+            self.finish(1, None).await;
+        }
     }
 
     /// 流异常结束：记账（status=0；按已收到的内容统计，上游确实产生了这些 token）
@@ -311,13 +379,16 @@ impl StreamStats {
         };
         let cost = compute_cost(tokens, self.price, self.cache_price, self.reasoning_price);
         let latency = self.started.elapsed().as_millis() as i64;
-        // 内容明细：重建的完整响应（无内容则 None）
+        // 风险：请求侧 + 响应侧最高等级；内容是否落库由 log.store_level 决定
+        let risk = risk_of(&self.request_findings, &self.response_findings);
         let response_body = self
             .rebuild
             .as_mut()
             .and_then(|r| r.build())
             .map(crate::proxy::handlers::clamp_json_body);
-        let details = if self.request_body.is_some() || self.upstream_body.is_some() || response_body.is_some() {
+        let details = if content_allowed(&self.log_store_level, risk)
+            && (self.request_body.is_some() || self.upstream_body.is_some() || response_body.is_some())
+        {
             Some(RequestDetailInput {
                 request_body: self.request_body.as_deref(),
                 upstream_body: self.upstream_body.as_deref(),
@@ -345,6 +416,7 @@ impl StreamStats {
             stream: true,
             client_ua: &self.client_ua,
             attempts: self.attempts,
+            risk_level: risk_label(risk),
             details,
         };
         match log_request(&self.pool, &input).await {

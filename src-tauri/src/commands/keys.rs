@@ -64,12 +64,21 @@ pub async fn create_key(
 
 #[tauri::command]
 pub async fn delete_key(state: State<'_, DbState>, id: String) -> Result<(), String> {
-    sqlx::query("DELETE FROM keys WHERE id = ?1")
+    let db = pool(&state);
+    // requests.key_id 带外键且历史日志需要保留：先把引用置空再删除（渠道/密钥名称已冗余在日志行）
+    let mut tx = db.begin().await.map_err(|e| e.to_string())?;
+    sqlx::query("UPDATE requests SET key_id = NULL WHERE key_id = ?1")
         .bind(&id)
-        .execute(pool(&state))
+        .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
-    record_admin_audit(pool(&state), "delete", "key", Some(&id), None).await;
+    sqlx::query("DELETE FROM keys WHERE id = ?1")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    tx.commit().await.map_err(|e| e.to_string())?;
+    record_admin_audit(db, "delete", "key", Some(&id), None).await;
     Ok(())
 }
 

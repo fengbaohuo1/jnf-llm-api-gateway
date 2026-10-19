@@ -66,6 +66,7 @@ const mapLog = (l: RawLog): RequestLog => ({
   stream: l.stream,
   clientUa: l.clientUa,
   attempts: l.attempts,
+  riskLevel: (l.riskLevel || "none") as RequestLog["riskLevel"],
   status: l.status,
   latencyMs: l.latencyMs,
   promptTokens: l.promptTokens,
@@ -127,6 +128,9 @@ export const api = {
       "test_channel",
       { id },
     ),
+  /** 拉取上游模型列表（添加/编辑渠道时选模型用；apiKey/channelId 按需提供） */
+  fetchChannelModels: (input: { baseUrl?: string; apiKey?: string; channelId?: string }) =>
+    invoke<{ models: string[]; url: string }>("fetch_channel_models", { ...input }),
 
   // ---- Keys ----
   listKeys: async (): Promise<ApiKey[]> =>
@@ -144,7 +148,7 @@ export const api = {
   toggleKeyStatus: (id: string) => invoke("toggle_key_status", { id }),
 
   // ---- Requests ----
-  listRequests: (input: { keyword?: string; channel?: string; model?: string }) =>
+  listRequests: (input: { keyword?: string; channel?: string; model?: string; risk?: string }) =>
     invoke<RawLog[]>("list_requests", { ...input }).then((rows) => rows.map(mapLog)),
   insertRequest: (input: Record<string, unknown>) => invoke("insert_request", { ...input }),
   getRequestDetail: (id: string) =>
@@ -352,6 +356,7 @@ interface RawLog {
   stream: boolean;
   clientUa: string;
   attempts: number;
+  riskLevel: string;
   status: number;
   latencyMs: number;
   promptTokens: number;

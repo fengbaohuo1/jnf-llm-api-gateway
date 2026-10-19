@@ -139,8 +139,12 @@ impl Service for McpService {
 
     async fn init(&self, ctx: &ServiceContext) -> Result<(), String> {
         let cfg = McpConfig::load(&ctx.pool).await;
+        // 安全基线：监听 0.0.0.0（局域网可访问）必须设置令牌，否则任何人都能调用
+        // 知识库工具（含删除/导入本地文件）。直接拒绝启动而不是只打警告。
         if cfg.host == "0.0.0.0" && cfg.token.is_none() {
-            eprintln!("[mcp] 警告：监听 0.0.0.0（局域网可访问）且未设置令牌，建议在 MCP 服务页生成令牌");
+            return Err(
+                "监听 0.0.0.0（局域网可访问）前请先生成 MCP 访问令牌（MCP 服务页）".to_string(),
+            );
         }
 
         // 索引目录与 kb 服务同源（data_dir/kb_index），构建任务写同一处

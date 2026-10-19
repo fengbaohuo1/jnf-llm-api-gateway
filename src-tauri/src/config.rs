@@ -59,6 +59,40 @@ pub async fn dump_settings_file(pool: &SqlitePool, config_dir: &Path) {
     }
 }
 
+/// 首次启用「按安全等级存储日志内容」时补齐新键 log.store_level：
+/// 旧版本只有布尔 log.content_enabled——false 迁移为 none，其余为 all。
+/// 返回是否写入了新键（调用方决定是否把变更导出到配置文件）。
+pub async fn ensure_log_store_level(pool: &SqlitePool) -> bool {
+    let existing: Option<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key = 'log.store_level'")
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+    if existing.is_some() {
+        return false;
+    }
+    let legacy: Option<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key = 'log.content_enabled'")
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+    let value = match legacy.as_deref() {
+        Some("false") => "none",
+        _ => "all",
+    };
+    sqlx::query(
+        "INSERT INTO settings (key, value, updated_at) VALUES ('log.store_level', ?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = ?1, updated_at = ?2",
+    )
+    .bind(value)
+    .bind(crate::commands::util::now_iso())
+    .execute(pool)
+    .await
+    .is_ok()
+}
+
 /// 把配置文件导入并覆盖 settings 表（启动时与"重新加载"按钮调用）。
 /// 返回导入的键数量。
 pub async fn import_settings_file(

@@ -135,6 +135,10 @@ pub async fn mcp_save_config(
     }
     let db = pool(&state);
     let before = McpConfig::load(db).await;
+    // 与服务启动时同一安全基线：开 0.0.0.0 必须先设令牌
+    if host == "0.0.0.0" && before.token.is_none() {
+        return Err("监听 0.0.0.0（局域网可访问）前请先生成 MCP 访问令牌".to_string());
+    }
     persist_setting(&app, db, "mcp", "services.mcp.host", &host).await?;
     persist_setting(&app, db, "mcp", "services.mcp.port", &port.to_string()).await?;
     persist_setting(

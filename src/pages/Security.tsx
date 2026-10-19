@@ -127,7 +127,7 @@ function EventsTab() {
         </div>
       </Card>
 
-      <Card className="p-0 overflow-hidden">
+      <Card className="p-0 overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead className="border-b border-edge bg-inset text-xs text-muted">
             <tr>
@@ -443,7 +443,7 @@ function RulesTab() {
         )}
       </Card>
 
-      <Card className="p-0 overflow-hidden">
+      <Card className="p-0 overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead className="border-b border-edge bg-inset text-xs text-muted">
             <tr>
@@ -564,7 +564,7 @@ function AuditTab() {
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-      <Card className="p-0 overflow-hidden">
+      <Card className="p-0 overflow-x-auto">
         <h3 className="flex items-center gap-2 border-b border-edge bg-inset px-3 py-2 text-sm font-semibold text-sub">
           <CheckCircle2 size={15} /> 鉴权事件（最近 50 条）
         </h3>
@@ -592,7 +592,7 @@ function AuditTab() {
         </table>
       </Card>
 
-      <Card className="p-0 overflow-hidden">
+      <Card className="p-0 overflow-x-auto">
         <h3 className="flex items-center gap-2 border-b border-edge bg-inset px-3 py-2 text-sm font-semibold text-sub">
           <Shield size={15} /> 管理操作审计（最近 50 条）
         </h3>

@@ -19,9 +19,10 @@ pub async fn list_requests(
     keyword: Option<String>,
     channel: Option<String>,
     model: Option<String>,
+    risk: Option<String>,
 ) -> Result<Vec<RequestLog>, String> {
     let mut sql = String::from(
-        "SELECT id, timestamp, channel_id, channel_name, key_id, key_name, model, protocol, stream, client_ua, attempts, status, latency_ms, prompt_tokens, completion_tokens, total_tokens, cache_hit_tokens, reasoning_tokens, cost, error FROM requests WHERE 1=1",
+        "SELECT id, timestamp, channel_id, channel_name, key_id, key_name, model, protocol, stream, client_ua, attempts, risk_level, status, latency_ms, prompt_tokens, completion_tokens, total_tokens, cache_hit_tokens, reasoning_tokens, cost, error FROM requests WHERE 1=1",
     );
     let mut kw: Option<String> = None;
     if let Some(k) = keyword {
@@ -50,6 +51,15 @@ pub async fn list_requests(
             sql.push_str(" AND model = ?");
         }
     }
+    // 风险等级筛选：none（无命中）/ low / medium / high
+    let mut rk: Option<String> = None;
+    if let Some(r) = risk {
+        let r = r.trim().to_ascii_lowercase();
+        if !r.is_empty() && r != "全部" && r != "all" {
+            rk = Some(r);
+            sql.push_str(" AND risk_level = ?");
+        }
+    }
     sql.push_str(" ORDER BY timestamp DESC LIMIT 500");
 
     let mut q = sqlx::query_as::<_, RequestLog>(&sql);
@@ -61,6 +71,9 @@ pub async fn list_requests(
     }
     if let Some(ref m) = md {
         q = q.bind(m.clone());
+    }
+    if let Some(ref r) = rk {
+        q = q.bind(r.clone());
     }
     let rows = q.fetch_all(pool(&state)).await.map_err(|e| e.to_string())?;
     Ok(rows)
@@ -119,6 +132,7 @@ pub async fn insert_request(
             stream: false,
             client_ua: "",
             attempts: 1,
+            risk_level: "none",
             details: None,
         },
     )
@@ -150,6 +164,8 @@ pub(crate) struct RequestLogInput<'a> {
     pub(crate) client_ua: &'a str,
     /// 第几次尝试（1 = 主渠道一次成功）
     pub(crate) attempts: i64,
+    /// 请求命中的最高安全风险：none / low / medium / high（安全扫描关闭时为 none）
+    pub(crate) risk_level: &'a str,
     /// 请求/响应内容明细（启用内容记录时由 proxy 传入；None = 只记概要）
     pub(crate) details: Option<RequestDetailInput<'a>>,
 }
@@ -173,9 +189,11 @@ pub(crate) async fn log_request(
     let id = new_id("req");
     let ts = now_iso();
     let total = input.prompt_tokens + input.completion_tokens;
-    let p = pool;
+    // 请求行 / 内容明细 / daily_stats / 配额用量在同一事务内写入：
+    // 任一步失败整体回滚，避免出现「有请求行但没计费」的脏数据
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
     sqlx::query(
-        "INSERT INTO requests (id, timestamp, channel_id, channel_name, key_id, key_name, model, protocol, stream, client_ua, attempts, status, latency_ms, prompt_tokens, completion_tokens, total_tokens, cache_hit_tokens, reasoning_tokens, cost, error) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
+        "INSERT INTO requests (id, timestamp, channel_id, channel_name, key_id, key_name, model, protocol, stream, client_ua, attempts, risk_level, status, latency_ms, prompt_tokens, completion_tokens, total_tokens, cache_hit_tokens, reasoning_tokens, cost, error) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)",
     )
     .bind(&id)
     .bind(&ts)
@@ -188,6 +206,7 @@ pub(crate) async fn log_request(
     .bind(input.stream)
     .bind(input.client_ua)
     .bind(input.attempts)
+    .bind(input.risk_level)
     .bind(input.status)
     .bind(input.latency_ms)
     .bind(input.prompt_tokens)
@@ -197,7 +216,7 @@ pub(crate) async fn log_request(
     .bind(input.reasoning_tokens)
     .bind(input.cost)
     .bind(input.error)
-    .execute(p)
+    .execute(&mut *tx)
     .await
     .map_err(|e| e.to_string())?;
 
@@ -216,21 +235,22 @@ pub(crate) async fn log_request(
             .bind(d.upstream_body.unwrap_or(""))
             .bind(d.response_body.unwrap_or(""))
             .bind(d.error_body.unwrap_or(""))
-            .execute(p)
+            .execute(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;
         }
     }
 
-    upsert_daily(p, &today_iso(), 1, total, input.cache_hit_tokens, input.completion_tokens, input.cost, input.latency_ms).await?;
+    upsert_daily(&mut tx, &today_iso(), 1, total, input.cache_hit_tokens, input.completion_tokens, input.cost, input.latency_ms).await?;
     if let Some(kid) = input.key_id {
         sqlx::query("UPDATE keys SET used_tokens = used_tokens + ?1 WHERE id = ?2")
             .bind(total)
             .bind(kid)
-            .execute(p)
+            .execute(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;
     }
+    tx.commit().await.map_err(|e| e.to_string())?;
     Ok(id)
 }
 
@@ -280,7 +300,7 @@ async fn prune_expired_if_due(pool: &SqlitePool) {
 }
 
 pub(crate) async fn upsert_daily(
-    pool: &SqlitePool,
+    conn: &mut sqlx::SqliteConnection,
     date: &str,
     reqs: i64,
     tokens: i64,
@@ -306,8 +326,114 @@ pub(crate) async fn upsert_daily(
     .bind(completion)
     .bind(cost)
     .bind(latency)
-    .execute(pool)
+    .execute(&mut *conn)
     .await
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+    use sqlx::SqlitePool;
+
+    use super::*;
+
+    /// 带完整迁移的内存库（校验 0011 requests.risk_level 与 0010 的明细表）
+    async fn migrated_pool() -> SqlitePool {
+        let opts = SqliteConnectOptions::from_str("sqlite::memory:")
+            .unwrap()
+            .journal_mode(SqliteJournalMode::Wal);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts)
+            .await
+            .unwrap();
+        sqlx::migrate!().run(&pool).await.unwrap();
+        pool
+    }
+
+    fn base_input<'a>(risk: &'a str, details: Option<RequestDetailInput<'a>>) -> RequestLogInput<'a> {
+        RequestLogInput {
+            channel_id: None,
+            channel_name: None,
+            key_id: None,
+            key_name: None,
+            model: "test-model",
+            status: 1,
+            latency_ms: 12,
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            cache_hit_tokens: 2,
+            reasoning_tokens: 1,
+            cost: 0.5,
+            error: None,
+            protocol: "openai",
+            stream: false,
+            client_ua: "test",
+            attempts: 1,
+            risk_level: risk,
+            details,
+        }
+    }
+
+    #[tokio::test]
+    async fn log_request_persists_risk_level_and_details() {
+        let pool = migrated_pool().await;
+        let details = RequestDetailInput {
+            request_body: Some("{\"a\":1}"),
+            upstream_body: Some("{\"b\":2}"),
+            response_body: Some("{\"c\":3}"),
+            error_body: None,
+        };
+        let id = log_request(&pool, &base_input("high", Some(details)))
+            .await
+            .unwrap();
+
+        let (risk, total): (String, i64) =
+            sqlx::query_as("SELECT risk_level, total_tokens FROM requests WHERE id = ?1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(risk, "high");
+        assert_eq!(total, 15);
+
+        let body: (String,) =
+            sqlx::query_as("SELECT request_body FROM request_details WHERE request_id = ?1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(body.0, "{\"a\":1}");
+
+        // 记账同时累加 daily_stats
+        let daily: i64 = sqlx::query_scalar("SELECT requests FROM daily_stats")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(daily, 1);
+    }
+
+    #[tokio::test]
+    async fn log_request_without_details_keeps_summary_only() {
+        let pool = migrated_pool().await;
+        let id = log_request(&pool, &base_input("none", None)).await.unwrap();
+
+        let risk: (String,) = sqlx::query_as("SELECT risk_level FROM requests WHERE id = ?1")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(risk.0, "none");
+        let details: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM request_details WHERE request_id = ?1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(details, 0, "未提供明细时不应写入 request_details");
+    }
 }

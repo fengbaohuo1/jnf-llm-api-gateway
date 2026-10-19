@@ -801,7 +801,7 @@ function DocsTab({
       <ErrBar text={error} />
 
       {/* 文档列表 */}
-      <Card className="p-0 overflow-hidden">
+      <Card className="p-0 overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead className="border-b border-edge bg-inset text-xs text-muted">
             <tr>

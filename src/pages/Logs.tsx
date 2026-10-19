@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
-import { Copy, Search } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Copy, RefreshCw, Search } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
 import { PageHeader, Card } from "../components/ui";
-import { Modal } from "../components/Modal";
+import { Button, Modal } from "../components/Modal";
 import { api } from "../api";
 import type { RequestDetail, RequestLog } from "../types";
 
@@ -20,14 +20,35 @@ const PROTO_LABEL: Record<string, { label: string; cls: string }> = {
   responses: { label: "Responses", cls: "bg-violet-50 text-violet-700 ring-violet-200 dark:bg-violet-950 dark:text-violet-300 dark:ring-violet-900" },
 };
 
+/** 安全风险徽标：none（无命中）/ low / medium / high */
+const RISK_LABEL: Record<RequestLog["riskLevel"], { label: string; cls: string }> = {
+  none: { label: "无风险", cls: "bg-inset text-muted ring-edge" },
+  low: { label: "低风险", cls: "bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-950 dark:text-sky-300 dark:ring-sky-900" },
+  medium: {
+    label: "中风险",
+    cls: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:ring-amber-900",
+  },
+  high: { label: "高风险", cls: "bg-red-50 text-red-700 ring-red-200 dark:bg-red-950 dark:text-red-300 dark:ring-red-900" },
+};
+
+function riskBadge(risk: RequestLog["riskLevel"]) {
+  const r = RISK_LABEL[risk] ?? RISK_LABEL.none;
+  return (
+    <span className={`inline-flex rounded-md px-1.5 py-0.5 text-[10px] font-medium ring-1 ${r.cls}`}>{r.label}</span>
+  );
+}
+
 function statusPill(status: number) {
-  const cls =
-    status >= 500
-      ? "bg-red-50 text-red-700 ring-red-200 dark:bg-red-950 dark:text-red-300 dark:ring-red-900"
-      : status >= 400
-        ? "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:ring-amber-900"
-        : "bg-green-50 text-green-700 ring-green-200 dark:bg-green-950 dark:text-green-300 dark:ring-green-900";
-  return <span className={`inline-flex rounded-md px-2 py-0.5 text-xs font-medium ring-1 ${cls}`}>{status}</span>;
+  // 后端 requests.status 语义：1 = 成功，0 = 失败（不是 HTTP 状态码）
+  const ok = status === 1;
+  const cls = ok
+    ? "bg-green-50 text-green-700 ring-green-200 dark:bg-green-950 dark:text-green-300 dark:ring-green-900"
+    : "bg-red-50 text-red-700 ring-red-200 dark:bg-red-950 dark:text-red-300 dark:ring-red-900";
+  return (
+    <span className={`inline-flex rounded-md px-2 py-0.5 text-xs font-medium ring-1 ${cls}`}>
+      {ok ? "成功" : "失败"}
+    </span>
+  );
 }
 
 function protoBadge(protocol: string) {
@@ -94,15 +115,18 @@ function BodySection({ title, raw }: { title: string; raw: string | null }) {
 function DetailModal({ log, onClose }: { log: RequestLog; onClose: () => void }) {
   const [detail, setDetail] = useState<RequestDetail | null>(null);
   const [failed, setFailed] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let alive = true;
     setDetail(null);
     setFailed(false);
+    setLoading(true);
     api
       .getRequestDetail(log.id)
       .then((d) => alive && setDetail(d))
-      .catch(() => alive && setFailed(true));
+      .catch(() => alive && setFailed(true))
+      .finally(() => alive && setLoading(false));
     return () => {
       alive = false;
     };
@@ -139,6 +163,10 @@ function DetailModal({ log, onClose }: { log: RequestLog; onClose: () => void })
             </p>
           </div>
           <div>
+            <p className="text-xs text-faint">安全风险（请求 + 响应）</p>
+            <p className="mt-0.5">{riskBadge(log.riskLevel)}</p>
+          </div>
+          <div>
             <p className="text-xs text-faint">Token（命中 / 输出 / 总）</p>
             <p className="font-medium text-sub">
               {fmt(log.tokens)}
@@ -152,7 +180,9 @@ function DetailModal({ log, onClose }: { log: RequestLog; onClose: () => void })
                 ) : null;
               })()}
               {log.reasoningTokens > 0 && (
-                <span className="ml-2 text-xs font-normal text-violet-600">输出 {fmt(log.reasoningTokens)}</span>
+                <span className="ml-2 text-xs font-normal text-violet-600 dark:text-violet-300">
+                  输出 {fmt(log.reasoningTokens)}
+                </span>
               )}
             </p>
           </div>
@@ -171,10 +201,12 @@ function DetailModal({ log, onClose }: { log: RequestLog; onClose: () => void })
         </div>
 
         {/* 内容明细 */}
+        {loading && <p className="text-sm text-faint">内容明细加载中…</p>}
         {failed && <p className="text-sm text-faint">明细加载失败</p>}
-        {detail && !hasDetail && (
+        {!loading && !failed && !hasDetail && (
           <p className="rounded-lg border border-edge px-3 py-3 text-sm text-faint">
-            该请求没有内容明细 —— 可能是旧数据，或在设置中关闭了“记录请求与响应内容”。
+            该请求没有内容明细 —— 可能低于「日志内容存储级别」阈值（无风险请求默认不存内容），
+            或设置中关闭了内容记录，也可能是引入内容记录前的旧数据。概要、计费与安全事件不受影响。
           </p>
         )}
         {hasDetail && (
@@ -196,30 +228,69 @@ export function Logs() {
   const [keyword, setKeyword] = useState("");
   const [channel, setChannel] = useState("全部");
   const [model, setModel] = useState("全部");
+  const [risk, setRisk] = useState("全部");
   const [selected, setSelected] = useState<RequestLog | null>(null);
+  // 筛选下拉的可选值：跨多次查询累积（否则选中某渠道后其它渠道选项会消失）
+  const [channelOptions, setChannelOptions] = useState<string[]>([]);
+  const [modelOptions, setModelOptions] = useState<string[]>([]);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  // 防抖关键词，避免每次键入都触发查询
+  const filters = useMemo(
+    () => ({ keyword: keyword || undefined, channel, model, risk }),
+    [keyword, channel, model, risk],
+  );
+
+  const load = useCallback(
+    async (f: typeof filters) => {
+      await refreshLogs(f);
+      setLastUpdated(new Date());
+    },
+    [refreshLogs],
+  );
+
+  // 防抖关键词；筛选变化或手动刷新时复用同一入口
   useEffect(() => {
     const handle = setTimeout(() => {
-      refreshLogs({ keyword: keyword || undefined, channel, model });
+      void load(filters);
     }, 300);
     return () => clearTimeout(handle);
-  }, [keyword, channel, model, refreshLogs]);
+  }, [filters, load]);
 
-  // 首次挂载
+  // 累积渠道 / 模型选项（只增不减，保证当前选中项始终在列表里）
   useEffect(() => {
-    refreshLogs({});
-  }, [refreshLogs]);
+    if (logs.length === 0) return;
+    setChannelOptions((prev) =>
+      Array.from(new Set([...prev, ...logs.map((l) => l.channel).filter(Boolean)])).sort(),
+    );
+    setModelOptions((prev) => Array.from(new Set([...prev, ...logs.map((l) => l.model).filter(Boolean)])).sort());
+  }, [logs]);
 
-  const channels = useMemo(() => ["全部", ...Array.from(new Set(logs.map((l) => l.channel)))], [logs]);
-  const models = useMemo(() => ["全部", ...Array.from(new Set(logs.map((l) => l.model)))], [logs]);
+  const channels = useMemo(
+    () => ["全部", ...new Set([...(channel !== "全部" ? [channel] : []), ...channelOptions])],
+    [channel, channelOptions],
+  );
+  const models = useMemo(() => ["全部", ...new Set([...(model !== "全部" ? [model] : []), ...modelOptions])], [model, modelOptions]);
 
   return (
     <div>
-      <PageHeader title="日志" description="查看网关请求日志，点击任一行查看完整请求与响应内容" />
+      <PageHeader
+        title="日志"
+        description="查看网关请求日志，点击任一行查看完整请求与响应内容"
+        actions={
+          <div className="flex items-center gap-2">
+            {lastUpdated && (
+              <span className="text-xs text-faint">更新于 {lastUpdated.toLocaleTimeString("zh-CN", { hour12: false })}</span>
+            )}
+            <Button variant="secondary" onClick={() => void load(filters)} disabled={loadingLogs}>
+              <RefreshCw size={14} className={`mr-1 inline ${loadingLogs ? "animate-spin" : ""}`} />
+              刷新
+            </Button>
+          </div>
+        }
+      />
 
       <Card className="mb-4">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
           <div className="relative">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
             <input
@@ -243,13 +314,20 @@ export function Logs() {
               </option>
             ))}
           </select>
+          <select value={risk} onChange={(e) => setRisk(e.target.value)} className={inputCls}>
+            <option value="全部">全部风险</option>
+            <option value="none">无风险（未命中）</option>
+            <option value="low">低风险</option>
+            <option value="medium">中风险</option>
+            <option value="high">高风险</option>
+          </select>
         </div>
         <p className="mt-2 text-xs text-faint">
-          共 {logs.length} 条记录 · 点击行查看完整请求/响应内容（内容记录可在设置中关闭）
+          共 {logs.length} 条记录（最多显示最近 500 条） · 点击行查看完整请求/响应内容（内容是否保存由设置中的「日志内容存储级别」决定）
         </p>
       </Card>
 
-      <Card className="p-0 overflow-hidden">
+      <Card className="p-0 overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead className="border-b border-edge bg-inset text-xs text-muted">
             <tr>
@@ -267,7 +345,14 @@ export function Logs() {
               <tr
                 key={l.id}
                 onClick={() => setSelected(l)}
-                className="cursor-pointer hover:bg-hover"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setSelected(l);
+                  }
+                }}
+                className="cursor-pointer hover:bg-hover focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500"
                 title="点击查看完整内容"
               >
                 <td className="px-3 py-2">
@@ -287,10 +372,15 @@ export function Logs() {
                   </p>
                   <p className="text-xs text-faint">
                     {l.stream ? "流式" : "非流式"}
-                    {l.attempts > 1 && ` · 第${l.attempts}次尝试成功`}
+                    {l.status === 1 && l.attempts > 1 && ` · 第${l.attempts}次尝试成功`}
                   </p>
                 </td>
-                <td className="px-3 py-2">{statusPill(l.status)}</td>
+                <td className="px-3 py-2">
+                  <div className="flex items-center gap-1.5">
+                    {statusPill(l.status)}
+                    {l.riskLevel !== "none" && riskBadge(l.riskLevel)}
+                  </div>
+                </td>
                 <td className="px-3 py-2 text-muted">{l.latencyMs} ms</td>
                 <td className="px-3 py-2">
                   <p className="text-sub">{fmt(l.tokens)}</p>
@@ -307,7 +397,7 @@ export function Logs() {
                           )}
                           {rate !== null && l.reasoningTokens > 0 && <span className="text-strong"> · </span>}
                           {l.reasoningTokens > 0 && (
-                            <span className="text-violet-600">输出 {fmt(l.reasoningTokens)}</span>
+                            <span className="text-violet-600 dark:text-violet-300">输出 {fmt(l.reasoningTokens)}</span>
                           )}
                         </p>
                       )

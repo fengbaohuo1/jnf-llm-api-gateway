@@ -9,8 +9,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use sqlx::SqlitePool;
 use tokio::sync::RwLock;
 
-use super::rules::load_rules;
-use super::{CompositeScanner, RuleScanner, ScanResult, SecurityScanner};
+use super::rules::{default_defs, load_rules};
+use super::{CompositeScanner, ScanResult, SecurityScanner};
 
 /// 规则重载间隔（秒）
 const TTL_SECS: u64 = 30;
@@ -26,8 +26,8 @@ impl RefreshScanner {
     pub fn new(pool: SqlitePool) -> Self {
         Self {
             pool,
-            // 初始用内置默认（同步构造），首次 scan 立即从 DB 加载
-            inner: RwLock::new(Arc::new(RuleScanner::new())),
+            // 初始用内置默认（含子串引擎），首次 scan 立即从 DB 加载
+            inner: RwLock::new(Arc::new(CompositeScanner::from_defs(default_defs()))),
             last_load: AtomicU64::new(0),
         }
     }
@@ -38,9 +38,16 @@ impl RefreshScanner {
             return;
         }
         self.last_load.store(now, Ordering::Relaxed);
-        let scanner: Arc<dyn SecurityScanner> = match load_rules(&self.pool).await {
-            defs if !defs.is_empty() => Arc::new(CompositeScanner::from_defs(defs)),
-            _ => Arc::new(RuleScanner::new()),
+        // 区分「规则表为空（从未初始化/全部删除）→ 内置默认」与
+        // 「表里有规则但全部被禁用 → 空引擎」：否则禁用所有规则 30s 后会被默认规则复活
+        let total: i64 = sqlx::query_scalar("SELECT count(*) FROM security_rules")
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or(0);
+        let scanner: Arc<dyn SecurityScanner> = if total == 0 {
+            Arc::new(CompositeScanner::from_defs(default_defs()))
+        } else {
+            Arc::new(CompositeScanner::from_defs(load_rules(&self.pool).await))
         };
         *self.inner.write().await = scanner;
     }
@@ -111,5 +118,32 @@ mod tests {
         let scanner = RefreshScanner::new(pool);
         let r = scanner.scan("sk-llmapi-abc123def456ghi789jk").await;
         assert!(r.findings.iter().any(|f| f.rule_id == "api_key_llmapi"));
+    }
+
+    #[tokio::test]
+    async fn all_disabled_rules_mean_no_scanning() {
+        let pool = test_pool().await;
+        sqlx::query(
+            "CREATE TABLE security_rules (
+                id TEXT PRIMARY KEY, category TEXT, risk TEXT, pattern TEXT, match_type TEXT,
+                enabled INTEGER, action TEXT, created_at TEXT)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // 表里有规则但被禁用：不能回退到内置默认规则
+        sqlx::query(
+            "INSERT INTO security_rules (id, category, risk, pattern, match_type, enabled, action, created_at)
+             VALUES ('t_disabled', 'secret', 'high', 'sk-test-[0-9]{8}', 'regex', 0, 'mask', '2025-01-01 00:00:00')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let scanner = RefreshScanner::new(pool);
+        let r = scanner
+            .scan("sk-llmapi-abc123def456ghi789jk sk-test-12345678")
+            .await;
+        assert!(r.findings.is_empty(), "全部禁用时不应有任何命中: {:?}", r.findings);
+        assert_eq!(r.sanitized, "sk-llmapi-abc123def456ghi789jk sk-test-12345678");
     }
 }

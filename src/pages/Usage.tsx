@@ -128,7 +128,7 @@ export function Usage() {
                   </p>
                   <p className="text-emerald-600">命中缓存 {fmt(p.cacheHitTokens)}</p>
                   <p className="text-sky-600">未命中 {fmt(miss)}</p>
-                  <p className="text-violet-600">输出 {fmt(p.completionTokens)}</p>
+                  <p className="text-violet-600 dark:text-violet-300">输出 {fmt(p.completionTokens)}</p>
                 </div>
                 <span className="mb-1 truncate text-[10px] font-medium text-muted" title={fmt(p.tokens)}>
                   {fmt(p.tokens)}

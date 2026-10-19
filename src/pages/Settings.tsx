@@ -9,7 +9,7 @@ import { openPath } from "@tauri-apps/plugin-opener";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type { ServiceInfo, ServiceStatus } from "../types";
 
-type TabKey = "server" | "proxy" | "general" | "system" | "ui" | "retry" | "failover" | "services";
+type TabKey = "server" | "proxy" | "general" | "system" | "ui" | "failover" | "services";
 
 const tabs: { key: TabKey; label: string }[] = [
   { key: "server", label: "服务配置" },
@@ -17,7 +17,6 @@ const tabs: { key: TabKey; label: string }[] = [
   { key: "general", label: "通用设置" },
   { key: "system", label: "系统" },
   { key: "ui", label: "界面设置" },
-  { key: "retry", label: "重试策略" },
   { key: "failover", label: "故障转移" },
   { key: "services", label: "扩展服务" },
 ];
@@ -55,10 +54,9 @@ function Row({ label, desc, children }: { label: string; desc?: string; children
 function ServerTab() {
   const host = useSetting("server.host", "127.0.0.1");
   const port = useSetting("server.port", "8787");
-  const basePath = useSetting("server.base_path", "/v1");
   const [saved, setSaved] = useState(false);
   const saveAll = async () => {
-    await Promise.all([host.save(), port.save(), basePath.save()]);
+    await Promise.all([host.save(), port.save()]);
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
@@ -70,11 +68,8 @@ function ServerTab() {
         <Row label="监听地址" desc="网关服务绑定地址（默认仅本机，对外开放请自行评估风险）">
           <input value={host.value ?? ""} onChange={(e) => host.setValue(e.target.value)} className={inputCls} />
         </Row>
-        <Row label="监听端口" desc="网关 HTTP 服务端口">
+        <Row label="监听端口" desc="网关 HTTP 服务端口（接口固定挂在 /v1 下）">
           <input value={port.value ?? ""} onChange={(e) => port.setValue(e.target.value)} className={inputCls} type="number" />
-        </Row>
-        <Row label="基础路径" desc="OpenAI 兼容接口前缀">
-          <input value={basePath.value ?? ""} onChange={(e) => basePath.setValue(e.target.value)} className={inputCls} />
         </Row>
       </div>
       <div className="mt-4 flex items-center justify-end gap-3">
@@ -90,14 +85,13 @@ function ProxyTab() {
   const securityEnabled = useSetting("security.enabled", "true");
   const securityMode = useSetting("security.mode", "replace");
   const port = useSetting("server.port", "8787");
-  const basePath = useSetting("server.base_path", "/v1");
   const [saved, setSaved] = useState(false);
   const saveAll = async () => {
     await Promise.all([enabled.save(), securityEnabled.save(), securityMode.save()]);
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
-  const endpoint = `http://127.0.0.1:${port.value ?? 8787}${basePath.value ?? "/v1"}/chat/completions`;
+  const endpoint = `http://127.0.0.1:${port.value ?? 8787}/v1/chat/completions`;
   return (
     <Card>
       <h3 className="mb-2 text-sm font-semibold text-sub">转发代理</h3>
@@ -136,36 +130,52 @@ function ProxyTab() {
 }
 
 function GeneralTab() {
-  const enableLogging = useSetting("general.enable_logging", "true");
-  const logContent = useSetting("log.content_enabled", "true");
+  // 日志内容存储级别：按请求命中的最高安全风险决定是否保存完整内容
+  const storeLevel = useSetting("log.store_level", "all");
   const logRetention = useSetting("general.log_retention", "0");
-  const defaultModel = useSetting("general.default_model", "gpt-4o");
   const [saved, setSaved] = useState(false);
   const saveAll = async () => {
-    await Promise.all([enableLogging.save(), logContent.save(), logRetention.save(), defaultModel.save()]);
+    await Promise.all([storeLevel.save(), logRetention.save()]);
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
   return (
     <Card>
-      <h3 className="mb-2 text-sm font-semibold text-sub">日志与默认值</h3>
+      <h3 className="mb-2 text-sm font-semibold text-sub">日志与保留</h3>
       <div className="divide-y divide-edge">
-        <Row label="启用请求日志" desc="记录所有经过网关的请求">
-          <Toggle checked={enableLogging.value === "true"} onChange={(v) => enableLogging.setValue(String(v))} />
+        <Row
+          label="日志内容存储级别"
+          desc="请求/响应内容按该请求命中的最高安全风险决定是否落库；概要、Token、计费与安全事件始终记录，不受影响"
+        >
+          <select
+            value={storeLevel.value ?? "all"}
+            onChange={(e) => storeLevel.setValue(e.target.value)}
+            className={inputCls}
+          >
+            <option value="all">全存（所有请求）</option>
+            <option value="low">低风险及以上（需命中规则）</option>
+            <option value="medium">中风险及以上</option>
+            <option value="high">高风险及以上</option>
+            <option value="none">不存内容（仅概要）</option>
+          </select>
         </Row>
         <Row
-          label="记录请求与响应内容"
-          desc="在日志中保存完整请求体、转发体与响应体（经安全脱敏）。关闭后仅记录概要，日志行不再可展开详情"
+          label="日志保留天数"
+          desc="请求日志、内容明细与关联安全事件超过 N 天后自动清理（0 = 永久保留）"
         >
-          <Toggle checked={logContent.value === "true"} onChange={(v) => logContent.setValue(String(v))} />
-        </Row>
-        <Row label="日志保留天数" desc="明细与请求超过 N 天后自动清理（0 = 永久保留）">
-          <input value={logRetention.value ?? ""} onChange={(e) => logRetention.setValue(e.target.value)} className={inputCls} type="number" />
-        </Row>
-        <Row label="默认模型">
-          <input value={defaultModel.value ?? ""} onChange={(e) => defaultModel.setValue(e.target.value)} className={inputCls} />
+          <input
+            value={logRetention.value ?? ""}
+            onChange={(e) => logRetention.setValue(e.target.value)}
+            className={inputCls}
+            type="number"
+          />
         </Row>
       </div>
+      <p className="mt-3 rounded-lg bg-inset px-3 py-2 text-xs text-faint">
+        提示：选择「低风险及以上」后，未命中任何规则的普通请求只保留概要（不再保存请求/响应正文），
+        既能大幅缩减日志体积，也能降低敏感内容留存风险；需要排查线上问题时临时切回「全存」即可（即时生效）。
+        风险等级由安全扫描器判定——若关闭了「代理与安全」里的安全扫描，将无法判定风险，选阈值级别时不会保存任何内容。
+      </p>
       <div className="mt-4 flex items-center justify-end gap-3">
         {saved && <span className="text-xs text-green-600">已保存</span>}
         <Button onClick={saveAll}>保存通用设置</Button>
@@ -269,11 +279,9 @@ function SystemTab() {
 
 function UiTab() {
   const theme = useSetting("ui.theme", "system");
-  const compact = useSetting("ui.compact", "false");
-  const denseTable = useSetting("ui.dense_table", "true");
   const [saved, setSaved] = useState(false);
   const saveAll = async () => {
-    await Promise.all([theme.save(), compact.save(), denseTable.save()]);
+    await theme.save();
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
@@ -296,56 +304,10 @@ function UiTab() {
             <option value="system">跟随系统</option>
           </select>
         </Row>
-        <Row label="紧凑模式" desc="减少间距以显示更多内容">
-          <Toggle checked={compact.value === "true"} onChange={(v) => compact.setValue(String(v))} />
-        </Row>
-        <Row label="表格密度" desc="日志/渠道列表使用更密的行高">
-          <Toggle checked={denseTable.value === "true"} onChange={(v) => denseTable.setValue(String(v))} />
-        </Row>
       </div>
       <div className="mt-4 flex items-center justify-end gap-3">
         {saved && <span className="text-xs text-green-600">已保存</span>}
         <Button onClick={saveAll}>保存界面设置</Button>
-      </div>
-    </Card>
-  );
-}
-
-function RetryTab() {
-  const enabled = useSetting("retry.enabled", "true");
-  const maxRetries = useSetting("retry.max_retries", "3");
-  const backoff = useSetting("retry.backoff", "exponential");
-  const statuses = useSetting("retry.statuses", "500,502,503,504,429");
-  const [saved, setSaved] = useState(false);
-  const saveAll = async () => {
-    await Promise.all([enabled.save(), maxRetries.save(), backoff.save(), statuses.save()]);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
-  };
-  return (
-    <Card>
-      <h3 className="mb-2 text-sm font-semibold text-sub">重试策略</h3>
-      <div className="divide-y divide-edge">
-        <Row label="启用自动重试" desc="请求失败时自动重试">
-          <Toggle checked={enabled.value === "true"} onChange={(v) => enabled.setValue(String(v))} />
-        </Row>
-        <Row label="最大重试次数">
-          <input value={maxRetries.value ?? ""} onChange={(e) => maxRetries.setValue(e.target.value)} className={inputCls} type="number" />
-        </Row>
-        <Row label="退避策略">
-          <select value={backoff.value ?? "exponential"} onChange={(e) => backoff.setValue(e.target.value)} className={inputCls}>
-            <option value="fixed">固定间隔</option>
-            <option value="exponential">指数退避</option>
-            <option value="jitter">指数 + 抖动</option>
-          </select>
-        </Row>
-        <Row label="触发重试的状态码" desc="逗号分隔">
-          <input value={statuses.value ?? ""} onChange={(e) => statuses.setValue(e.target.value)} className={inputCls} />
-        </Row>
-      </div>
-      <div className="mt-4 flex items-center justify-end gap-3">
-        {saved && <span className="text-xs text-green-600">已保存</span>}
-        <Button onClick={saveAll}>保存重试策略</Button>
       </div>
     </Card>
   );
@@ -554,14 +516,14 @@ export function Settings() {
           </button>
         ))}
       </div>
-      {tab === "server" && <ServerTab />}
-      {tab === "proxy" && <ProxyTab />}
-      {tab === "general" && <GeneralTab />}
-      {tab === "system" && <SystemTab />}
-      {tab === "ui" && <UiTab />}
-      {tab === "retry" && <RetryTab />}
-      {tab === "failover" && <FailoverTab />}
-      {tab === "services" && <ServicesTab />}
+      {/* 各 Tab 常驻挂载（仅隐藏），避免切换 Tab 时 useSetting 重新读库而丢弃未保存的编辑 */}
+      <div className={tab === "server" ? "" : "hidden"}><ServerTab /></div>
+      <div className={tab === "proxy" ? "" : "hidden"}><ProxyTab /></div>
+      <div className={tab === "general" ? "" : "hidden"}><GeneralTab /></div>
+      <div className={tab === "system" ? "" : "hidden"}><SystemTab /></div>
+      <div className={tab === "ui" ? "" : "hidden"}><UiTab /></div>
+      <div className={tab === "failover" ? "" : "hidden"}><FailoverTab /></div>
+      <div className={tab === "services" ? "" : "hidden"}><ServicesTab /></div>
     </div>
   );
 }

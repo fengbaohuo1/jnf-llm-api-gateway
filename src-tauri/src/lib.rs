@@ -69,6 +69,10 @@ pub fn run() {
             if imported == 0 {
                 tauri::async_runtime::block_on(config::dump_settings_file(&pool, &dir));
             }
+            // 旧版本只有 log.content_enabled（布尔）；补齐新的内容存储级别键并写回文件
+            if tauri::async_runtime::block_on(config::ensure_log_store_level(&pool)) {
+                tauri::async_runtime::block_on(config::dump_settings_file(&pool, &dir));
+            }
             app.manage(DbState(pool.clone()));
 
             // 扩展服务注册表：装配（开关 services.<id>.enabled，存 settings /
@@ -179,6 +183,7 @@ pub fn run() {
             commands::channels::delete_channel,
             commands::channels::toggle_channel_status,
             commands::channels::test_channel,
+            commands::channels::fetch_channel_models,
             // keys
             commands::keys::list_keys,
             commands::keys::create_key,

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { Pencil, Plus, Trash2, Cable, Search, ChevronDown } from "lucide-react";
-import { channelTypes } from "../data/mock";
+import { Pencil, Plus, Trash2, Cable, Search, ChevronDown, RefreshCw } from "lucide-react";
+import { channelTypes, providerPresets } from "../data/mock";
 import type { Channel, ChannelStatus, ChannelType } from "../types";
 import { useAppStore } from "../store/useAppStore";
 import { PageHeader, Card } from "../components/ui";
 import { Button, Modal } from "../components/Modal";
 import { ChannelTypeBadge, StatusBadge } from "../components/Badge";
+import { api } from "../api";
 
 type FormState = {
   name: string;
@@ -75,27 +76,78 @@ function Accordion({ title, children }: { title: string; children: React.ReactNo
 function ChannelFormModal({
   open,
   initial,
+  channelId,
+  error,
   onClose,
   onSubmit,
   submitting,
 }: {
   open: boolean;
   initial: FormState | null;
+  /** 编辑时的渠道 id（用于「获取模型」读取已保存的 Key） */
+  channelId?: string;
+  /** 提交失败的错误信息（在弹窗内展示，避免被遮罩挡住） */
+  error?: string | null;
   onClose: () => void;
   onSubmit: (data: FormState) => Promise<void>;
   submitting: boolean;
 }) {
   const [form, setForm] = useState<FormState>(initial ?? emptyForm);
+  const [models, setModels] = useState<string[]>([]);
+  const [modelErr, setModelErr] = useState<string | null>(null);
+  const [loadingModels, setLoadingModels] = useState(false);
 
   // Reset form when opening with a fresh target.
   const [lastOpen, setLastOpen] = useState(open);
   if (open !== lastOpen) {
     setLastOpen(open);
-    if (open) setForm(initial ?? emptyForm);
+    if (open) {
+      setForm(initial ?? emptyForm);
+      setModels([]);
+      setModelErr(null);
+      setLoadingModels(false);
+    }
   }
 
   const set = (k: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  const preset = providerPresets[form.type] ?? providerPresets.Custom;
+  // 所有内置厂商默认地址：切换类型时只有「空地址」或「仍是内置默认」才自动替换，避免覆盖用户手填
+  const defaultUrls = useMemo(
+    () => Object.values(providerPresets).map((p) => p.baseUrl).filter(Boolean),
+    [],
+  );
+
+  const changeType = (t: ChannelType) => {
+    setForm((f) => {
+      const baseUrl =
+        !f.baseUrl.trim() || defaultUrls.includes(f.baseUrl.trim()) ? providerPresets[t].baseUrl : f.baseUrl;
+      return { ...f, type: t, baseUrl };
+    });
+    setModels([]);
+    setModelErr(null);
+  };
+
+  const loadModels = async () => {
+    setLoadingModels(true);
+    setModelErr(null);
+    try {
+      const r = await api.fetchChannelModels({
+        baseUrl: form.baseUrl.trim() || undefined,
+        apiKey: form.apiKey.trim() || undefined,
+        channelId: channelId || undefined,
+      });
+      setModels(r.models);
+    } catch (e) {
+      setModelErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoadingModels(false);
+    }
+  };
+
+  const chip =
+    "rounded-md border border-strong px-2 py-0.5 font-mono text-[11px] text-sub transition-colors hover:bg-accent-soft hover:text-accent";
 
   return (
     <Modal open={open} title={initial ? "编辑渠道" : "添加渠道"} onClose={onClose}>
@@ -106,12 +158,17 @@ function ChannelFormModal({
           onSubmit(form);
         }}
       >
+        {error && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
+            {error}
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-4">
           <Field label="渠道名称">
             <input required value={form.name} onChange={set("name")} className={inputCls} placeholder="如 OpenAI Main" />
           </Field>
           <Field label="渠道类型">
-            <select value={form.type} onChange={set("type")} className={inputCls}>
+            <select value={form.type} onChange={(e) => changeType(e.target.value as ChannelType)} className={inputCls}>
               {channelTypes.map((t) => (
                 <option key={t} value={t}>
                   {t}
@@ -120,20 +177,43 @@ function ChannelFormModal({
             </select>
           </Field>
         </div>
-        <Field label="Base URL" hint="必须以 http:// 或 https:// 开头">
+        {(form.type === "Claude" || form.type === "Gemini") && (
+          <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+            该类型的原生适配器尚未实现；如需接入，请把类型设为 Custom 并填写其 OpenAI 兼容端点。
+          </p>
+        )}
+        <Field label="Base URL" hint="必须以 http:// 或 https:// 开头；网关会在此基础上拼接 /chat/completions">
           <input
             required
             value={form.baseUrl}
             onChange={set("baseUrl")}
             className={inputCls}
-            placeholder="https://api.openai.com/v1"
+            placeholder={preset.baseUrl || "https://api.example.com/v1"}
             pattern="https?://.+"
             title="请输入合法的 http(s) 地址"
           />
         </Field>
         <div className="grid grid-cols-2 gap-4">
-          <Field label="默认模型">
-            <input value={form.model} onChange={set("model")} className={inputCls} placeholder="gpt-4o" />
+          <Field label="默认模型" hint="留空 = 匹配任意模型；建议填上游真实模型 ID">
+            <div className="flex gap-2">
+              <input
+                list="channel-model-options"
+                value={form.model}
+                onChange={set("model")}
+                className={inputCls}
+                placeholder={preset.models[0] ?? "如 gpt-4o / deepseek-chat"}
+              />
+              <Button
+                variant="secondary"
+                className="shrink-0"
+                disabled={loadingModels}
+                onClick={loadModels}
+                title="用当前 Base URL 与 Key 拉取上游 /models"
+              >
+                <RefreshCw size={13} className={`mr-1 inline ${loadingModels ? "animate-spin" : ""}`} />
+                {loadingModels ? "获取中" : "获取模型"}
+              </Button>
+            </div>
           </Field>
           <Field label="状态">
             <select value={form.status} onChange={set("status")} className={inputCls}>
@@ -143,6 +223,40 @@ function ChannelFormModal({
             </select>
           </Field>
         </div>
+        <datalist id="channel-model-options">
+          {[...new Set([...models, ...preset.models])].map((m) => (
+            <option key={m} value={m} />
+          ))}
+        </datalist>
+        {modelErr && (
+          <p className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950 dark:text-red-300">
+            模型列表获取失败：{modelErr}（可手动填写模型 ID）
+          </p>
+        )}
+        {models.length > 0 && (
+          <div>
+            <p className="mb-1 text-xs text-faint">上游返回的模型（点击填入）：</p>
+            <div className="flex max-h-24 flex-wrap gap-1.5 overflow-y-auto">
+              {models.map((m) => (
+                <button key={m} type="button" onClick={() => setForm((f) => ({ ...f, model: m }))} className={chip}>
+                  {m}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {preset.models.length > 0 && (
+          <div>
+            <p className="mb-1 text-xs text-faint">常用模型（点击填入）：</p>
+            <div className="flex flex-wrap gap-1.5">
+              {preset.models.map((m) => (
+                <button key={m} type="button" onClick={() => setForm((f) => ({ ...f, model: m }))} className={chip}>
+                  {m}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <Accordion title="负载均衡配置（优先级 / 权重）">
           <div className="grid grid-cols-2 gap-4">
             <Field label="优先级" hint="故障转移时越大的越先尝试（主渠道 = 最高优先级）">
@@ -257,10 +371,12 @@ export function Channels() {
 
   const openAdd = () => {
     setEditing(null);
+    setError(null);
     setModalOpen(true);
   };
   const openEdit = (c: Channel) => {
     setEditing(c);
+    setError(null);
     setModalOpen(true);
   };
 
@@ -293,6 +409,7 @@ export function Channels() {
           baseUrl: data.baseUrl,
           model: data.model,
           apiKey: data.apiKey,
+          status: data.status,
           priority: data.priority,
           weight: data.weight,
           ...price,
@@ -397,7 +514,7 @@ export function Channels() {
         </p>
       </Card>
 
-      <Card className="p-0 overflow-hidden">
+      <Card className="p-0 overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead className="border-b border-edge bg-inset text-xs text-muted">
             <tr>
@@ -423,7 +540,9 @@ export function Channels() {
                 <td className="px-3 py-2">
                   <ChannelTypeBadge type={c.type} />
                 </td>
-                <td className="px-3 py-2 text-muted">{c.model || "—"}</td>
+                <td className="px-3 py-2 text-muted">
+                  {c.model ? c.model : <span className="text-xs text-faint">任意模型</span>}
+                </td>
                 <td className="px-3 py-2 text-muted">
                   <span className="font-medium text-sub">{c.priority}</span>
                   <span className="text-xs text-faint"> / {c.weight}</span>
@@ -437,7 +556,7 @@ export function Channels() {
                         <span className="block text-xs text-emerald-500">缓存 ¥{perM(c.cachePricePer1kTokens)}</span>
                       )}
                       {c.reasoningPricePer1kTokens > 0 && (
-                        <span className="block text-xs text-violet-500">输出 ¥{perM(c.reasoningPricePer1kTokens)}</span>
+                        <span className="block text-xs text-violet-500 dark:text-violet-300">输出 ¥{perM(c.reasoningPricePer1kTokens)}</span>
                       )}
                     </span>
                   ) : (
@@ -485,6 +604,8 @@ export function Channels() {
 
       <ChannelFormModal
         open={modalOpen}
+        channelId={editing?.id}
+        error={error}
         initial={editing ? {
           name: editing.name,
           type: editing.type,

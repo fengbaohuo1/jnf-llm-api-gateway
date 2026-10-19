@@ -10,6 +10,8 @@ use super::ProxyState;
 #[derive(Debug)]
 pub(crate) struct ForwardError {
     pub(crate) retryable: bool,
+    /// 上游 HTTP 状态码（网络/解析错误时为 None；用于把 4xx 原样返回给客户端）
+    pub(crate) status: Option<u16>,
     /// 给用户/日志的简短错误描述（正文截断 300 字符）
     pub(crate) message: String,
     /// 上游错误响应原文（非 2xx 时携带，供内容明细落库，上限 64KB）
@@ -18,7 +20,7 @@ pub(crate) struct ForwardError {
 
 impl ForwardError {
     fn new(retryable: bool, message: impl Into<String>) -> Self {
-        Self { retryable, message: message.into(), error_body: None }
+        Self { retryable, status: None, message: message.into(), error_body: None }
     }
 }
 
@@ -55,6 +57,7 @@ pub(crate) async fn forward_to_channel(
         let retryable = status.is_server_error() || status.as_u16() == 429;
         return Err(ForwardError {
             retryable,
+            status: Some(status.as_u16()),
             error_body: Some(clamp_body(&text)),
             message: format!("上游 {status}: {}", truncate(&text, 300)),
         });
@@ -95,7 +98,7 @@ pub(crate) async fn forward_stream_to_channel(
             ),
             Err(_) => (format!("上游 {status}"), None),
         };
-        return Err(ForwardError { retryable, message, error_body });
+        return Err(ForwardError { retryable, status: Some(status.as_u16()), message, error_body });
     }
     Ok(resp)
 }

@@ -12,7 +12,7 @@ interface AppState {
 
   refreshChannels: () => Promise<void>;
   refreshKeys: () => Promise<void>;
-  refreshLogs: (filters?: { keyword?: string; channel?: string; model?: string }) => Promise<void>;
+  refreshLogs: (filters?: { keyword?: string; channel?: string; model?: string; risk?: string }) => Promise<void>;
 
   addChannel: (input: {
     name: string;
@@ -20,6 +20,7 @@ interface AppState {
     baseUrl: string;
     model: string;
     apiKey: string;
+    status: ChannelStatus;
     priority: number;
     weight: number;
     pricePer1kTokens: number;
@@ -106,6 +107,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           keyword: filters?.keyword,
           channel: filters?.channel,
           model: filters?.model,
+          risk: filters?.risk,
         }),
       );
       set({ logs, loadingLogs: false });
@@ -116,7 +118,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   addChannel: async (input) => {
-    await safe(() => api.createChannel({ ...input, status: "active" }));
+    await safe(() => api.createChannel({ ...input }));
     await get().refreshChannels();
   },
   updateChannel: async (input) => {

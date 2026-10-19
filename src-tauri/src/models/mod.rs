@@ -68,6 +68,8 @@ pub struct RequestLog {
     pub client_ua: String,
     /// 本次请求尝试的渠道数（成功行 = 第几次尝试成功；失败行 = 已尝试次数）
     pub attempts: i64,
+    /// 请求命中的最高安全风险：none / low / medium / high（安全扫描关闭时为 none）
+    pub risk_level: String,
     pub status: i64,
     pub latency_ms: i64,
     pub prompt_tokens: i64,
