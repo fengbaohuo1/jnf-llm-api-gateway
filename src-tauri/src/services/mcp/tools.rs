@@ -687,7 +687,7 @@ mod tests {
             .unwrap();
         schema::apply_schema_direct(&pool).await.unwrap();
         sqlx::query(
-            "CREATE TABLE channels (id TEXT PRIMARY KEY, name TEXT, type TEXT, base_url TEXT, \
+            "CREATE TABLE channels (id TEXT PRIMARY KEY, name TEXT, type TEXT, protocol TEXT NOT NULL DEFAULT '', base_url TEXT, \
              model TEXT, status TEXT, api_key_encrypted TEXT)",
         )
         .execute(&pool)

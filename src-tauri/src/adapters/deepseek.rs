@@ -36,8 +36,8 @@ impl ChannelAdapter for DeepSeekAdapter {
         <Self as OpenAiCompatible>::compat_chat_completion(self, req).await
     }
 
-    async fn test(&self) -> Result<TestResult, AdapterError> {
-        <Self as OpenAiCompatible>::compat_test(self).await
+    async fn test(&self, model: Option<&str>) -> Result<TestResult, AdapterError> {
+        <Self as OpenAiCompatible>::compat_test(self, model).await
     }
 }
 

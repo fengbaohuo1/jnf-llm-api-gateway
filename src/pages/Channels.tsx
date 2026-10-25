@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Pencil, Plus, Trash2, Cable, Search, ChevronDown, RefreshCw } from "lucide-react";
-import { channelTypes, providerPresets } from "../data/mock";
-import type { Channel, ChannelStatus, ChannelType } from "../types";
+import { channelTypes, providerPresets, protocolOptions, autoProtocol } from "../data/mock";
+import type { Channel, ChannelProtocol, ChannelStatus, ChannelType } from "../types";
 import { useAppStore } from "../store/useAppStore";
 import { PageHeader, Card } from "../components/ui";
 import { Button, Modal } from "../components/Modal";
@@ -11,6 +11,8 @@ import { api } from "../api";
 type FormState = {
   name: string;
   type: ChannelType;
+  /** 显式协议；"" = 按渠道类型自动推导 */
+  protocol: ChannelProtocol | "";
   baseUrl: string;
   model: string;
   apiKey: string;
@@ -26,6 +28,7 @@ type FormState = {
 const emptyForm: FormState = {
   name: "",
   type: "OpenAI",
+  protocol: "",
   baseUrl: "",
   model: "",
   apiKey: "",
@@ -123,8 +126,16 @@ function ChannelFormModal({
     setForm((f) => {
       const baseUrl =
         !f.baseUrl.trim() || defaultUrls.includes(f.baseUrl.trim()) ? providerPresets[t].baseUrl : f.baseUrl;
-      return { ...f, type: t, baseUrl };
+      // 类型变化时协议回到「自动」（避免 Claude/Gemini 类型残留显式协议导致测试失败）
+      return { ...f, type: t, protocol: "", baseUrl };
     });
+    setModels([]);
+    setModelErr(null);
+  };
+
+  const changeProtocol = (p: ChannelProtocol | "") => {
+    setForm((f) => ({ ...f, protocol: p }));
+    // 协议变化后旧的模型列表可能来自不同端点，清掉避免误导
     setModels([]);
     setModelErr(null);
   };
@@ -145,6 +156,29 @@ function ChannelFormModal({
       setLoadingModels(false);
     }
   };
+
+  // 生效协议：显式优先，否则按渠道类型推导（与后端一致）
+  const effectiveProtocol = form.protocol || autoProtocol(form.type);
+  const isDeepSeek = effectiveProtocol === "deepseek";
+  const isNativeUnimplemented = effectiveProtocol === "anthropic" || effectiveProtocol === "gemini";
+
+  // DeepSeek 模型列表不写死：编辑已有渠道（Key 已保存）时自动拉取；
+  // 新建渠道则等 API Key 填到合理长度后自动拉取一次，失败仍可点「获取模型」重试。
+  const autoFetchedModels = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      autoFetchedModels.current = false;
+      return;
+    }
+    if (autoFetchedModels.current || !isDeepSeek) return;
+    if (!form.baseUrl.trim().startsWith("http")) return;
+    const hasKey = !!channelId || form.apiKey.trim().length >= 20;
+    if (!hasKey) return;
+    autoFetchedModels.current = true;
+    void loadModels();
+    // 只依赖触发条件；loadModels 每次渲染重建，不放入依赖避免重复请求
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, isDeepSeek, channelId, form.apiKey, form.baseUrl]);
 
   const chip =
     "rounded-md border border-strong px-2 py-0.5 font-mono text-[11px] text-sub transition-colors hover:bg-accent-soft hover:text-accent";
@@ -177,12 +211,38 @@ function ChannelFormModal({
             </select>
           </Field>
         </div>
-        {(form.type === "Claude" || form.type === "Gemini") && (
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="渠道协议" hint="决定连通性测试 / 知识库问答使用的适配器；代理转发统一走 OpenAI 兼容 /chat/completions">
+            <select
+              value={form.protocol}
+              onChange={(e) => changeProtocol(e.target.value as FormState["protocol"])}
+              className={inputCls}
+            >
+              {protocolOptions.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="状态">
+            <select value={form.status} onChange={set("status")} className={inputCls}>
+              <option value="active">启用</option>
+              <option value="disabled">停用</option>
+              <option value="error">异常</option>
+            </select>
+          </Field>
+        </div>
+        {isNativeUnimplemented && (
           <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-950 dark:text-amber-300">
-            该类型的原生适配器尚未实现；如需接入，请把类型设为 Custom 并填写其 OpenAI 兼容端点。
+            原生协议适配器（Anthropic / Gemini）尚未实现：连通性测试与知识库问答会失败。可把协议改为「OpenAI
+            兼容」，接入厂商的 OpenAI 兼容端点后使用。
           </p>
         )}
-        <Field label="Base URL" hint="必须以 http:// 或 https:// 开头；网关会在此基础上拼接 /chat/completions">
+        <Field
+          label="Base URL"
+          hint="必须以 http:// 或 https:// 开头；网关会在此基础上拼接 /chat/completions（OpenAI 基址需含 /v1）"
+        >
           <input
             required
             value={form.baseUrl}
@@ -193,36 +253,40 @@ function ChannelFormModal({
             title="请输入合法的 http(s) 地址"
           />
         </Field>
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="默认模型" hint="留空 = 匹配任意模型；建议填上游真实模型 ID">
-            <div className="flex gap-2">
-              <input
-                list="channel-model-options"
-                value={form.model}
-                onChange={set("model")}
-                className={inputCls}
-                placeholder={preset.models[0] ?? "如 gpt-4o / deepseek-chat"}
-              />
-              <Button
-                variant="secondary"
-                className="shrink-0"
-                disabled={loadingModels}
-                onClick={loadModels}
-                title="用当前 Base URL 与 Key 拉取上游 /models"
-              >
-                <RefreshCw size={13} className={`mr-1 inline ${loadingModels ? "animate-spin" : ""}`} />
-                {loadingModels ? "获取中" : "获取模型"}
-              </Button>
-            </div>
-          </Field>
-          <Field label="状态">
-            <select value={form.status} onChange={set("status")} className={inputCls}>
-              <option value="active">启用</option>
-              <option value="disabled">停用</option>
-              <option value="error">异常</option>
-            </select>
-          </Field>
-        </div>
+        <Field
+          label="默认模型"
+          hint={
+            isDeepSeek
+              ? "留空 = 匹配任意模型；DeepSeek 模型由上游 /models 自动获取，也可手动填写"
+              : "留空 = 匹配任意模型；建议填上游真实模型 ID"
+          }
+        >
+          <div className="flex gap-2">
+            <input
+              list="channel-model-options"
+              value={form.model}
+              onChange={set("model")}
+              className={inputCls}
+              placeholder={preset.models[0] ?? "如 gpt-4o / deepseek-chat"}
+            />
+            <Button
+              variant="secondary"
+              className="shrink-0"
+              disabled={loadingModels}
+              onClick={loadModels}
+              title="用当前 Base URL 与 Key 拉取上游 /models"
+            >
+              <RefreshCw size={13} className={`mr-1 inline ${loadingModels ? "animate-spin" : ""}`} />
+              {loadingModels ? "获取中" : "获取模型"}
+            </Button>
+          </div>
+        </Field>
+        {isDeepSeek && models.length === 0 && !loadingModels && (
+          <p className="text-xs text-faint">
+            DeepSeek 模型列表通过上游接口获取：{channelId ? "打开编辑时自动加载" : "填写 API Key 后自动加载"}
+            ，也可点「获取模型」。
+          </p>
+        )}
         <datalist id="channel-model-options">
           {[...new Set([...models, ...preset.models])].map((m) => (
             <option key={m} value={m} />
@@ -394,6 +458,7 @@ export function Channels() {
           id: editing.id,
           name: data.name,
           type: data.type,
+          protocol: data.protocol,
           baseUrl: data.baseUrl,
           model: data.model,
           status: data.status,
@@ -406,6 +471,7 @@ export function Channels() {
         await addChannel({
           name: data.name,
           type: data.type,
+          protocol: data.protocol,
           baseUrl: data.baseUrl,
           model: data.model,
           apiKey: data.apiKey,
@@ -539,6 +605,9 @@ export function Channels() {
                 </td>
                 <td className="px-3 py-2">
                   <ChannelTypeBadge type={c.type} />
+                  <p className="mt-0.5 text-[10px] text-faint" title="实际使用的上游协议">
+                    {c.protocol ? `${c.protocol}（指定）` : `${autoProtocol(c.type)}（自动）`}
+                  </p>
                 </td>
                 <td className="px-3 py-2 text-muted">
                   {c.model ? c.model : <span className="text-xs text-faint">任意模型</span>}
@@ -609,6 +678,7 @@ export function Channels() {
         initial={editing ? {
           name: editing.name,
           type: editing.type,
+          protocol: editing.protocol ?? "",
           baseUrl: editing.baseUrl,
           model: editing.model,
           apiKey: "",

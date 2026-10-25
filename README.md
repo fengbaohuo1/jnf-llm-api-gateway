@@ -56,18 +56,20 @@ LLM API Gateway 把这些收进一个桌面应用：客户端只指向**一个�
 - **故障转移（默认关闭）**：遇到 5xx / 429 / 超时 / 网络错误时按顺序切换到下一个渠道，最多 `failover.max_attempts` 次；4xx 直接返回客户端，不重试。
 - **没有故障就不做负载均衡**：正常请求固定走主渠道，只有失败才转移——这是刻意的设计选择，避免把「多通道」变成「随机抖动」。
 - 渠道级配置：Base URL、API Key、模型、状态、优先级、权重，以及输入 / 输出 / 缓存命中 / 思考输出四项单价（界面按「元 / 百万 tokens」录入，内部按每 1k 存储，成本统一显示 `¥`）。
-- **模型配置更省事**：按渠道类型预填常见 Base URL；点「获取模型」从上游 `GET /models` 拉取真实模型列表后点选（编辑已有渠道时复用已保存的 Key），也可手填模型 ID；模型留空表示匹配任意模型。
+- **模型配置更省事**：按渠道类型预填常见 Base URL；点「获取模型」从上游 `GET /models` 拉取真实模型列表后点选（编辑已有渠道时复用已保存的 Key），DeepSeek 渠道打开编辑会自动通过接口加载模型，也可手填模型 ID；模型留空表示匹配任意模型。
+- **渠道协议可选**：类型（OpenAI / DeepSeek / Custom…）决定品牌与默认值，协议（自动 / OpenAI 兼容 / DeepSeek / Anthropic / Gemini）决定实际适配器；自定义渠道可显式选协议，接入任意 OpenAI 兼容端点，或声明 DeepSeek 协议以启用思考模式兼容。
+- **DeepSeek 思考模式兼容（默认开启）**：DeepSeek 思考模型要求工具调用轮次的 assistant 消息回传 `reasoning_content`，而按 OpenAI 协议实现的客户端通常不回传。网关转发到 DeepSeek 协议渠道时自动补空占位（已有值不覆盖），可在「设置 → 代理与安全」关闭。
 
 ### 上游渠道支持
 
 | 渠道类型 | 状态 | 说明 |
 | --- | --- | --- |
 | OpenAI | ✅ | OpenAI 官方或兼容端点 |
-| DeepSeek | ✅ | DeepSeek 官方 |
-| 自定义（OpenAI 兼容） | ✅ | 中转服务、vLLM、LM Studio、Ollama 的 OpenAI 兼容层等 |
-| Claude / Gemini | 🚧 | 类型已在界面保留，适配器尚未实现 |
+| DeepSeek | ✅ | DeepSeek 官方；模型列表通过 `/models` 自动获取，含思考模式兼容 |
+| 自定义（OpenAI 兼容） | ✅ | 中转服务、vLLM、LM Studio、Ollama 的 OpenAI 兼容层等；可显式选择协议 |
+| Claude / Gemini | 🚧 | 类型保留；原生协议尚未实现，可把协议设为「OpenAI 兼容」接其兼容端点 |
 
-> 注意：Anthropic / Responses 是**客户端协议**的支持，上游仍要求是 OpenAI 兼容端点。网关会做协议转换，所以 Claude Code、Anthropic SDK 这类客户端可以直接指向本网关。
+> 注意：Anthropic / Responses 是**客户端协议**的支持，上游仍要求是 OpenAI 兼容端点。网关会做协议转换，所以 Claude Code、Anthropic SDK 这类客户端可以直接指向本网关。渠道的「协议」是另一层概念——它决定网关如何调用上游（当前可用 OpenAI 兼容与 DeepSeek），与客户端协议互不影响。
 
 ### 密钥与计费
 
@@ -283,6 +285,7 @@ curl http://127.0.0.1:8787/v1/responses \
 | `server.enabled` | `true` | 关闭后代理请求返回 503（`/health` 与 `/v1/models` 不受影响） |
 | `failover.enabled` | `false` | 故障转移开关 |
 | `failover.max_attempts` | `3` | 单请求最多尝试的渠道数 |
+| `compat.deepseek_reasoning` | `true` | DeepSeek 思考模式兼容：给带 `tool_calls` 的 assistant 消息补空 `reasoning_content`（已有值不覆盖） |
 | `security.enabled` | `true` | 安全扫描总开关 |
 | `security.mode` | `replace` | `replace` 脱敏后放行 / `block` 拦截高危内容 |
 | `log.store_level` | `all` | 内容明细存储级别：`all` / `low` / `medium` / `high` / `none`（按请求最高风险判定；无风险请求在阈值级别下只存概要） |
@@ -366,7 +369,7 @@ curl http://127.0.0.1:8787/v1/responses \
 # 前端类型检查（strict + noUnusedLocals）
 npx tsc --noEmit
 
-# 后端类型检查与单元测试（176 个）
+# 后端类型检查与单元测试（181 个）
 cd src-tauri
 cargo check
 cargo test
@@ -417,9 +420,15 @@ cargo test
 **日志里看不到请求内容？**
 内容明细受「设置 → 通用设置 → 日志内容存储级别」控制：选择「低风险及以上 / 中及以上 / 高及以上」时，未达阈值的请求只保留概要；关闭安全扫描后无法判定风险，阈值级别也不会保存内容。需要完整正文时切回「全存」。概要、Token、计费、安全事件始终记录，不受该级别影响。
 
+**DeepSeek 报错 `The reasoning_content in the thinking mode must be passed back to the API.`？**
+这是 DeepSeek 思考模型的要求：工具调用后的 assistant 消息必须回传 `reasoning_content`，而按 OpenAI 协议实现的客户端（Codex、自研 Agent 等）通常只回传 `tool_calls`。确认「设置 → 代理与安全 → DeepSeek 思考模式兼容」已开启（默认开启），网关会补空占位；客户端自己回传了真实 reasoning 内容时不会被覆盖。该兼容只在渠道协议为 `deepseek` 时生效。
+
+**渠道连通性测试报 HTTP 400，但代理请求正常？**
+测试会使用渠道配置的「默认模型」发一个最小请求（旧版本曾用厂商默认模型，导致 DeepSeek 等渠道误报 400）；请把模型填成上游真实模型 ID，或点「获取模型」从 `/models` 选择。
+
 ## 已知限制
 
-- 上游目前只支持 OpenAI 兼容协议；Claude / Gemini 渠道适配器未实现。
+- 上游目前支持 OpenAI 兼容协议与 DeepSeek（OpenAI 兼容 + 思考模式兼容）；Anthropic / Gemini 原生适配器未实现（界面保留类型与协议选项，可先接其 OpenAI 兼容端点）。
 - `server.base_path` 与 `retry.*` 仍是预留配置项、尚未接入后端逻辑（已从设置界面移除）；服务路由固定 `/v1`，重试由故障转移承担。
 - 删除已使用过的渠道 / 密钥时会断开历史日志的引用（`requests.channel_id/key_id` 置空），日志行与统计保留。
 - 配额在请求完成后扣减，极端并发下可能短暂超出配额上限（未做额度预占）。

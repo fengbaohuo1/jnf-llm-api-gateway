@@ -2,12 +2,17 @@
 
 export type ChannelType = "OpenAI" | "DeepSeek" | "Claude" | "Gemini" | "Custom";
 
+/** 渠道显式协议；空串表示「自动」——按渠道类型推导 */
+export type ChannelProtocol = "openai" | "deepseek" | "anthropic" | "gemini";
+
 export type ChannelStatus = "active" | "disabled" | "error";
 
 export interface Channel {
   id: string;
   name: string;
   type: ChannelType;
+  /** 显式上游协议；"" = 按渠道类型自动推导 */
+  protocol: ChannelProtocol | "";
   baseUrl: string;
   model: string;
   status: ChannelStatus;

@@ -84,10 +84,11 @@ function ProxyTab() {
   const enabled = useSetting("server.enabled", "true");
   const securityEnabled = useSetting("security.enabled", "true");
   const securityMode = useSetting("security.mode", "replace");
+  const deepseekCompat = useSetting("compat.deepseek_reasoning", "true");
   const port = useSetting("server.port", "8787");
   const [saved, setSaved] = useState(false);
   const saveAll = async () => {
-    await Promise.all([enabled.save(), securityEnabled.save(), securityMode.save()]);
+    await Promise.all([enabled.save(), securityEnabled.save(), securityMode.save(), deepseekCompat.save()]);
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
@@ -101,6 +102,12 @@ function ProxyTab() {
         </Row>
         <Row label="服务地址" desc="本地程序接入时配置 Base URL 为以下地址，并使用 sk-llmapi-* 密钥">
           <code className="block rounded-md bg-inset px-3 py-1.5 text-xs text-sub">{endpoint}</code>
+        </Row>
+        <Row
+          label="DeepSeek 思考模式兼容"
+          desc="转发到 DeepSeek 协议渠道时，给带 tool_calls 的 assistant 消息补空 reasoning_content；DeepSeek 思考模型要求工具调用轮次回传该字段，否则工具执行后的下一轮会 400。若某个非思考模型不接受该字段，可关闭"
+        >
+          <Toggle checked={deepseekCompat.value === "true"} onChange={(v) => deepseekCompat.setValue(String(v))} />
         </Row>
       </div>
       <h3 className="mb-2 mt-6 text-sm font-semibold text-sub">安全扫描与脱敏</h3>

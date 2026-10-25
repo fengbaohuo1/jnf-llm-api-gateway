@@ -9,6 +9,7 @@
 //! 内容记录：`prepare_request` 捕获"收到的原始请求"（脱敏后）与"实际转发体"，
 //! 成功/失败路径随 `log_request` 一起写入 `request_details` 明细表（见 commands/requests）。
 
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -25,7 +26,7 @@ use sqlx::SqlitePool;
 use crate::commands::requests::log_request;
 use crate::commands::requests::{RequestDetailInput, RequestLogInput};
 use crate::commands::util::new_id;
-use crate::scheduler::select_channels;
+use crate::scheduler::{select_channels, ChannelChoice};
 use crate::security::leak::check_leak;
 use crate::security::{
     decide, max_risk, Finding, PolicyDecision, RiskLevel, ScanResult, SecurityScanner,
@@ -413,6 +414,70 @@ fn should_block(mode: &str, result: &ScanResult) -> bool {
     (mode == "block" && result.risk >= RiskLevel::High) || decide(&result.findings) == PolicyDecision::Block
 }
 
+/// 渠道协议兼容：DeepSeek 思考模式要求"工具调用轮次的 assistant 消息"回传
+/// `reasoning_content`（文档要求与 tool_calls 一起传回），而按 OpenAI 协议实现的
+/// 客户端（Codex、自研 Agent 等）通常只回传 tool_calls，导致工具执行后的下一轮
+/// 请求被 DeepSeek 拒绝：`The reasoning_content in the thinking mode must be
+/// passed back to the API.`。
+///
+/// 这里在转发前为 `protocol = deepseek` 的渠道补一个空字符串 `reasoning_content`
+/// （官方 issue 中接受的占位值）；非 DeepSeek 渠道、开关关闭时原样透传。
+/// 已有 reasoning_content 的请求不会被覆盖。
+fn body_for_channel<'a>(
+    body: &'a Value,
+    channel: &ChannelChoice,
+    compat_deepseek_reasoning: bool,
+) -> Cow<'a, Value> {
+    if !compat_deepseek_reasoning || channel.protocol != "deepseek" {
+        return Cow::Borrowed(body);
+    }
+    let Some(messages) = body.get("messages").and_then(|m| m.as_array()) else {
+        return Cow::Borrowed(body);
+    };
+    let needs_shim = messages.iter().any(|msg| {
+        msg.get("role").and_then(|r| r.as_str()) == Some("assistant")
+            && msg
+                .get("tool_calls")
+                .and_then(|t| t.as_array())
+                .map(|calls| !calls.is_empty())
+                .unwrap_or(false)
+            && msg.get("reasoning_content").is_none()
+    });
+    if !needs_shim {
+        return Cow::Borrowed(body);
+    }
+
+    let mut patched = body.clone();
+    if let Some(messages) = patched.get_mut("messages").and_then(|m| m.as_array_mut()) {
+        for msg in messages.iter_mut() {
+            let is_tool_call_turn = msg.get("role").and_then(|r| r.as_str()) == Some("assistant")
+                && msg
+                    .get("tool_calls")
+                    .and_then(|t| t.as_array())
+                    .map(|calls| !calls.is_empty())
+                    .unwrap_or(false);
+            if is_tool_call_turn {
+                if let Some(obj) = msg.as_object_mut() {
+                    obj.entry("reasoning_content")
+                        .or_insert_with(|| Value::String(String::new()));
+                }
+            }
+        }
+    }
+    Cow::Owned(patched)
+}
+
+/// 给已知上游报错附加排查提示（未知错误原样返回）
+fn with_upstream_hint(message: &str) -> String {
+    let mut msg = message.to_string();
+    if message.contains("reasoning_content") {
+        msg.push_str(
+            "。提示：DeepSeek 思考模式要求工具调用后的 assistant 消息回传 reasoning_content；若客户端未回传，可在「设置 → 代理与安全 → DeepSeek 思考模式兼容」开启自动补空（默认开启）",
+        );
+    }
+    msg
+}
+
 /// 组装内容明细输入（由 prepared 快照 + 本次结果字段构成）。
 /// 是否真的落库由 `log.store_level` 与本次请求风险决定（见 ProxySettings::content_allowed）：
 /// 未达阈值的请求只保留概要行，不写 request_details。
@@ -539,7 +604,12 @@ async fn handle_non_stream_completion(
     let mut last_status: Option<u16> = None;
     for (idx, channel) in prepared.queue.iter().take(attempts).enumerate() {
         let started = Instant::now();
-        match forward_to_channel(&state.client, channel, &prepared.body).await {
+        let forward_body = body_for_channel(
+            &prepared.body,
+            channel,
+            prepared.settings.compat_deepseek_reasoning,
+        );
+        match forward_to_channel(&state.client, channel, forward_body.as_ref()).await {
             Ok(mut resp_value) => {
                 let latency = started.elapsed().as_millis() as u64;
 
@@ -724,7 +794,7 @@ async fn handle_non_stream_completion(
         proto,
         ApiError::new(
             last_status.unwrap_or(502),
-            format!("所有渠道转发失败: {last_error}"),
+            format!("所有渠道转发失败: {}", with_upstream_hint(&last_error)),
             "all_channels_failed",
         ),
     )
@@ -757,7 +827,12 @@ async fn handle_stream_completion(
     let mut last_status: Option<u16> = None;
     for (idx, channel) in prepared.queue.iter().take(attempts).enumerate() {
         let started = Instant::now();
-        match forward_stream_to_channel(&state, channel, &prepared.body).await {
+        let forward_body = body_for_channel(
+            &prepared.body,
+            channel,
+            prepared.settings.compat_deepseek_reasoning,
+        );
+        match forward_stream_to_channel(&state, channel, forward_body.as_ref()).await {
             Ok(upstream) => {
                 // 上游已 200：开始 SSE 透传（记账/脱敏/统计/协议翻译都在流任务里完成）
                 return stream_response(&state, upstream, channel, &prepared, started, proto, (idx + 1) as i64).await;
@@ -824,7 +899,7 @@ async fn handle_stream_completion(
         proto,
         ApiError::new(
             last_status.unwrap_or(502),
-            format!("所有渠道转发失败: {last_error}"),
+            format!("所有渠道转发失败: {}", with_upstream_hint(&last_error)),
             "all_channels_failed",
         ),
     )
@@ -1107,5 +1182,76 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn deepseek_compat_injects_reasoning_content_for_tool_call_turns() {
+        let mut channel = crate::proxy::test_util::choice("http://x");
+        channel.protocol = "deepseek".into();
+        let body = serde_json::json!({
+            "model": "deepseek-flash",
+            "messages": [
+                { "role": "system", "content": "s" },
+                { "role": "user", "content": "查一下" },
+                {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{ "id": "call_1", "type": "function", "function": { "name": "kb_search", "arguments": "{}" } }]
+                },
+                { "role": "tool", "tool_call_id": "call_1", "content": "结果" }
+            ]
+        });
+        let patched = body_for_channel(&body, &channel, true);
+        let msgs = patched["messages"].as_array().unwrap();
+        assert_eq!(msgs[2]["reasoning_content"], serde_json::json!(""));
+        // 非 tool_call 轮次不补
+        assert!(msgs[0].get("reasoning_content").is_none());
+        // 原始请求体不被修改（上游转发明细仍记录原样）
+        assert!(body["messages"][2].get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn deepseek_compat_off_or_other_protocol_passes_through() {
+        let mut channel = crate::proxy::test_util::choice("http://x");
+        channel.protocol = "deepseek".into();
+        let body = serde_json::json!({
+            "model": "deepseek-flash",
+            "messages": [{
+                "role": "assistant",
+                "tool_calls": [{ "id": "c", "type": "function", "function": { "name": "f", "arguments": "{}" } }]
+            }]
+        });
+        assert!(body_for_channel(&body, &channel, false)["messages"][0]
+            .get("reasoning_content")
+            .is_none());
+
+        channel.protocol = "openai".into();
+        assert!(body_for_channel(&body, &channel, true)["messages"][0]
+            .get("reasoning_content")
+            .is_none());
+    }
+
+    #[test]
+    fn deepseek_compat_keeps_existing_reasoning_content() {
+        let mut channel = crate::proxy::test_util::choice("http://x");
+        channel.protocol = "deepseek".into();
+        let body = serde_json::json!({
+            "model": "deepseek-flash",
+            "messages": [{
+                "role": "assistant",
+                "reasoning_content": "先思考",
+                "tool_calls": [{ "id": "c", "type": "function", "function": { "name": "f", "arguments": "{}" } }]
+            }]
+        });
+        let patched = body_for_channel(&body, &channel, true);
+        assert_eq!(patched["messages"][0]["reasoning_content"], "先思考");
+    }
+
+    #[test]
+    fn upstream_reasoning_error_gets_hint() {
+        let msg = "所有渠道转发失败: DeepSeek 400: The `reasoning_content` in the thinking mode must be passed back to the API.";
+        let out = with_upstream_hint(msg);
+        assert!(out.contains("DeepSeek 思考模式兼容"));
+        assert_eq!(with_upstream_hint("普通错误"), "普通错误");
     }
 }

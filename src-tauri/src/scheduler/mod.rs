@@ -18,9 +18,12 @@ use sqlx::SqlitePool;
 pub struct ChannelChoice {
     pub id: String,
     pub name: String,
-    /// 渠道类型（转发层当前透传 OpenAI 兼容协议；类型字段保留给协议路由）
+    /// 渠道类型（品牌：OpenAI/DeepSeek/Claude/Gemini/Custom）
     #[allow(dead_code)]
     pub channel_type: String,
+    /// 生效协议（显式 protocol；为空时按渠道类型推导）：
+    /// openai / deepseek / anthropic / gemini
+    pub protocol: String,
     pub base_url: String,
     pub api_key: String,
     /// 渠道配置的模型（转发时使用请求的 model；本字段保留用于日志/展示）
@@ -44,8 +47,8 @@ pub async fn select_channels(
     pool: &SqlitePool,
     requested_model: &str,
 ) -> Result<Vec<ChannelChoice>, String> {
-    let rows: Vec<(String, String, String, String, String, String, i64, i64, f64, f64, f64)> = sqlx::query_as(
-        "SELECT id, name, type, base_url, api_key_encrypted, model, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens FROM channels
+    let rows: Vec<(String, String, String, String, String, String, String, i64, i64, f64, f64, f64)> = sqlx::query_as(
+        "SELECT id, name, type, protocol, base_url, api_key_encrypted, model, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens FROM channels
          WHERE status = 'active' AND (model = ?1 OR model = '')
          ORDER BY priority DESC",
     )
@@ -56,9 +59,10 @@ pub async fn select_channels(
 
     let candidates: Vec<ChannelChoice> = rows
         .into_iter()
-        .map(|(id, name, channel_type, base_url, api_key, model, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens)| ChannelChoice {
+        .map(|(id, name, channel_type, protocol, base_url, api_key, model, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens)| ChannelChoice {
             id,
             name,
+            protocol: crate::adapters::effective_protocol(&channel_type, &protocol),
             channel_type,
             base_url,
             api_key,
@@ -140,7 +144,8 @@ mod tests {
             .unwrap();
         sqlx::query(
             "CREATE TABLE channels (
-                id TEXT PRIMARY KEY, name TEXT, type TEXT, base_url TEXT,
+                id TEXT PRIMARY KEY, name TEXT, type TEXT, protocol TEXT NOT NULL DEFAULT '',
+                base_url TEXT,
                 model TEXT, status TEXT, api_key_encrypted TEXT,
                 latency_ms INTEGER, priority INTEGER, weight INTEGER,
                 price_per_1k_tokens REAL DEFAULT 0,
@@ -154,6 +159,33 @@ mod tests {
         pool
     }
 
+    async fn insert_channel_with_type(
+        pool: &SqlitePool,
+        id: &str,
+        channel_type: &str,
+        protocol: &str,
+        model: &str,
+        status: &str,
+        priority: i64,
+        weight: i64,
+    ) {
+        sqlx::query(
+            "INSERT INTO channels (id, name, type, protocol, base_url, model, status, api_key_encrypted, priority, weight, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 'http://x', ?5, ?6, 'k', ?7, ?8, '2025-01-01 00:00:00', '2025-01-01 00:00:00')",
+        )
+        .bind(id)
+        .bind(id)
+        .bind(channel_type)
+        .bind(protocol)
+        .bind(model)
+        .bind(status)
+        .bind(priority)
+        .bind(weight)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
     async fn insert_channel(
         pool: &SqlitePool,
         id: &str,
@@ -162,19 +194,24 @@ mod tests {
         priority: i64,
         weight: i64,
     ) {
-        sqlx::query(
-            "INSERT INTO channels (id, name, type, base_url, model, status, api_key_encrypted, priority, weight, created_at, updated_at)
-             VALUES (?1, ?2, 'OpenAI', 'http://x', ?3, ?4, 'k', ?5, ?6, '2025-01-01 00:00:00', '2025-01-01 00:00:00')",
-        )
-        .bind(id)
-        .bind(id)
-        .bind(model)
-        .bind(status)
-        .bind(priority)
-        .bind(weight)
-        .execute(pool)
-        .await
-        .unwrap();
+        insert_channel_with_type(pool, id, "OpenAI", "", model, status, priority, weight).await;
+    }
+
+    #[tokio::test]
+    async fn effective_protocol_derived_from_type_or_explicit() {
+        let pool = test_pool().await;
+        insert_channel_with_type(&pool, "ds", "DeepSeek", "", "deepseek-flash", "active", 0, 1).await;
+        insert_channel_with_type(&pool, "custom-ds", "Custom", "deepseek", "deepseek-chat", "active", 0, 1).await;
+        insert_channel_with_type(&pool, "plain", "OpenAI", "", "gpt-4o", "active", 0, 1).await;
+
+        let queue = select_channels(&pool, "deepseek-flash").await.unwrap();
+        assert_eq!(queue[0].protocol, "deepseek");
+
+        let queue = select_channels(&pool, "deepseek-chat").await.unwrap();
+        assert_eq!(queue[0].protocol, "deepseek");
+
+        let queue = select_channels(&pool, "gpt-4o").await.unwrap();
+        assert_eq!(queue[0].protocol, "openai");
     }
 
     #[tokio::test]

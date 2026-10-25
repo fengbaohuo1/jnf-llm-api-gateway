@@ -17,6 +17,7 @@ interface AppState {
   addChannel: (input: {
     name: string;
     type: ChannelType;
+    protocol: string;
     baseUrl: string;
     model: string;
     apiKey: string;
@@ -31,6 +32,7 @@ interface AppState {
     id: string;
     name: string;
     type: ChannelType;
+    protocol: string;
     baseUrl: string;
     model: string;
     status: ChannelStatus;
@@ -49,6 +51,7 @@ interface AppState {
     message: string;
     model: string;
     code: string | null;
+    protocol: string;
   }>;
 
   createKey: (input: { name: string; quotaLimit: number; expiresAt: string | null }) => Promise<{

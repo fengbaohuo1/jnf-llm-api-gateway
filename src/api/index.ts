@@ -31,6 +31,7 @@ const mapChannel = (c: RawChannel): Channel => ({
   id: c.id,
   name: c.name,
   type: c.type as ChannelType,
+  protocol: (c.protocol ?? "") as Channel["protocol"],
   baseUrl: c.baseUrl,
   model: c.model,
   status: c.status as ChannelStatus,
@@ -92,6 +93,7 @@ export const api = {
   createChannel: async (input: {
     name: string;
     type: string;
+    protocol: string;
     baseUrl: string;
     model: string;
     apiKey: string;
@@ -110,6 +112,7 @@ export const api = {
     id: string;
     name: string;
     type: string;
+    protocol: string;
     baseUrl: string;
     model: string;
     status: string;
@@ -124,10 +127,14 @@ export const api = {
   deleteChannel: (id: string) => invoke("delete_channel", { id }),
   toggleChannelStatus: (id: string) => invoke("toggle_channel_status", { id }),
   testChannel: (id: string) =>
-    invoke<{ ok: boolean; latencyMs: number | null; message: string; model: string; code: string | null }>(
-      "test_channel",
-      { id },
-    ),
+    invoke<{
+      ok: boolean;
+      latencyMs: number | null;
+      message: string;
+      model: string;
+      code: string | null;
+      protocol: string;
+    }>("test_channel", { id }),
   /** 拉取上游模型列表（添加/编辑渠道时选模型用；apiKey/channelId 按需提供） */
   fetchChannelModels: (input: { baseUrl?: string; apiKey?: string; channelId?: string }) =>
     invoke<{ models: string[]; url: string }>("fetch_channel_models", { ...input }),
@@ -313,6 +320,7 @@ interface RawChannel {
   id: string;
   name: string;
   type: string;
+  protocol: string;
   baseUrl: string;
   model: string;
   status: string;

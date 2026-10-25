@@ -8,8 +8,8 @@ use super::pool;
 
 #[tauri::command]
 pub async fn list_channels(state: State<'_, DbState>) -> Result<Vec<Channel>, String> {
-    let rows = sqlx::query_as::<_, (String, String, String, String, String, String, String, Option<i64>, i64, i64, f64, f64, f64, String)>(
-        "SELECT id, name, type, base_url, model, status, api_key_encrypted, latency_ms, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens, created_at FROM channels ORDER BY created_at DESC",
+    let rows = sqlx::query_as::<_, (String, String, String, String, String, String, String, String, Option<i64>, i64, i64, f64, f64, f64, String)>(
+        "SELECT id, name, type, protocol, base_url, model, status, api_key_encrypted, latency_ms, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens, created_at FROM channels ORDER BY created_at DESC",
     )
     .fetch_all(pool(&state))
     .await
@@ -21,17 +21,18 @@ pub async fn list_channels(state: State<'_, DbState>) -> Result<Vec<Channel>, St
             id: r.0,
             name: r.1,
             type_: r.2,
-            base_url: r.3,
-            model: r.4,
-            status: r.5,
-            api_key_masked: mask(&r.6),
-            latency_ms: r.7,
-            priority: r.8,
-            weight: r.9,
-            price_per_1k_tokens: r.10,
-            cache_price_per_1k_tokens: r.11,
-            reasoning_price_per_1k_tokens: r.12,
-            created_at: r.13,
+            protocol: r.3,
+            base_url: r.4,
+            model: r.5,
+            status: r.6,
+            api_key_masked: mask(&r.7),
+            latency_ms: r.8,
+            priority: r.9,
+            weight: r.10,
+            price_per_1k_tokens: r.11,
+            cache_price_per_1k_tokens: r.12,
+            reasoning_price_per_1k_tokens: r.13,
+            created_at: r.14,
         })
         .collect())
 }
@@ -41,6 +42,7 @@ pub async fn create_channel(
     state: State<'_, DbState>,
     name: String,
     type_: String,
+    protocol: String,
     base_url: String,
     model: String,
     api_key: String,
@@ -54,9 +56,9 @@ pub async fn create_channel(
     let id = new_id("ch");
     let created = now_iso();
     sqlx::query(
-        "INSERT INTO channels (id, name, type, base_url, model, status, api_key_encrypted, latency_ms, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,NULL,?8,?9,?10,?11,?12,?13,?13)",
+        "INSERT INTO channels (id, name, type, protocol, base_url, model, status, api_key_encrypted, latency_ms, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,NULL,?9,?10,?11,?12,?13,?14,?14)",
     )
-    .bind(&id).bind(&name).bind(&type_).bind(&base_url).bind(&model).bind(&status).bind(&api_key).bind(priority).bind(weight).bind(price_per_1k_tokens).bind(cache_price_per_1k_tokens).bind(reasoning_price_per_1k_tokens).bind(&created)
+    .bind(&id).bind(&name).bind(&type_).bind(&protocol).bind(&base_url).bind(&model).bind(&status).bind(&api_key).bind(priority).bind(weight).bind(price_per_1k_tokens).bind(cache_price_per_1k_tokens).bind(reasoning_price_per_1k_tokens).bind(&created)
     .execute(pool(&state))
     .await
     .map_err(|e| e.to_string())?;
@@ -66,6 +68,7 @@ pub async fn create_channel(
         id,
         name,
         type_,
+        protocol,
         base_url,
         model,
         status,
@@ -86,6 +89,7 @@ pub async fn update_channel(
     id: String,
     name: String,
     type_: String,
+    protocol: String,
     base_url: String,
     model: String,
     status: String,
@@ -98,14 +102,15 @@ pub async fn update_channel(
 ) -> Result<(), String> {
     // 前端编辑时提交完整表单，直接全量更新（api_key 传空字符串表示不改动密钥）。
     sqlx::query(
-        "UPDATE channels SET name = ?2, type = ?3, base_url = ?4, model = ?5, status = ?6,
-                api_key_encrypted = CASE WHEN ?7 = '' THEN api_key_encrypted ELSE ?7 END,
-                priority = ?8, weight = ?9, price_per_1k_tokens = ?10, cache_price_per_1k_tokens = ?11, reasoning_price_per_1k_tokens = ?12, updated_at = ?13
+        "UPDATE channels SET name = ?2, type = ?3, protocol = ?4, base_url = ?5, model = ?6, status = ?7,
+                api_key_encrypted = CASE WHEN ?8 = '' THEN api_key_encrypted ELSE ?8 END,
+                priority = ?9, weight = ?10, price_per_1k_tokens = ?11, cache_price_per_1k_tokens = ?12, reasoning_price_per_1k_tokens = ?13, updated_at = ?14
          WHERE id = ?1",
     )
     .bind(id.as_str())
     .bind(name.as_str())
     .bind(type_)
+    .bind(protocol)
     .bind(base_url)
     .bind(model)
     .bind(status)
@@ -157,24 +162,25 @@ pub async fn toggle_channel_status(state: State<'_, DbState>, id: String) -> Res
 
 #[tauri::command]
 pub async fn test_channel(state: State<'_, DbState>, id: String) -> Result<serde_json::Value, String> {
-    // 1. 从数据库读取渠道配置
-    let row: Option<(String, String, String, String)> = sqlx::query_as(
-        "SELECT type, base_url, api_key_encrypted, model FROM channels WHERE id = ?1",
+    // 1. 从数据库读取渠道配置（含显式协议；为空时按渠道类型推导）
+    let row: Option<(String, String, String, String, String)> = sqlx::query_as(
+        "SELECT type, protocol, base_url, api_key_encrypted, model FROM channels WHERE id = ?1",
     )
     .bind(&id)
     .fetch_optional(pool(&state))
     .await
     .map_err(|e| e.to_string())?;
 
-    let Some((ctype, base_url, api_key, model)) = row else {
+    let Some((ctype, protocol, base_url, api_key, model)) = row else {
         return Err("渠道不存在".into());
     };
+    let effective = crate::adapters::effective_protocol(&ctype, &protocol);
 
-    // 2. 创建适配器并真实测试
-    let adapter = crate::adapters::create_adapter(&ctype, &base_url, &api_key)
+    // 2. 创建适配器并真实测试（必须使用渠道配置的模型，否则会拿厂商默认模型测出 400）
+    let adapter = crate::adapters::create_adapter(&effective, &base_url, &api_key)
         .map_err(|e| e.to_string())?;
     // 失败不再抛长错误串，改为结构化返回：ok=false + 简短错误码 + 完整 message
-    let result = match adapter.test().await {
+    let result = match adapter.test(Some(&model)).await {
         Ok(r) => r,
         Err(e) => {
             let code = adapter_error_code(&e);
@@ -191,7 +197,7 @@ pub async fn test_channel(state: State<'_, DbState>, id: String) -> Result<serde
                 "message": message,
                 "code": code,
                 "model": model,
-                "protocol": adapter.channel_type(),
+                "protocol": effective,
             }));
         }
     };
@@ -221,7 +227,7 @@ pub async fn test_channel(state: State<'_, DbState>, id: String) -> Result<serde
         "message": result.message,
         "code": null,
         "model": model,
-        "protocol": adapter.channel_type(),
+        "protocol": effective,
     }))
 }
 

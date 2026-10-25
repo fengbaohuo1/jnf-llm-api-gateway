@@ -96,10 +96,15 @@ pub trait OpenAiCompatible: ChannelAdapter + Send + Sync {
         })
     }
 
-    /// 连通性测试（公共实现）：用厂商默认模型发一个最小请求
-    async fn compat_test(&self) -> Result<TestResult, AdapterError> {
+    /// 连通性测试（公共实现）：用指定模型（缺省厂商默认模型）发一个最小请求
+    async fn compat_test(&self, model: Option<&str>) -> Result<TestResult, AdapterError> {
+        let model = model
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+            .unwrap_or_else(|| self.default_model())
+            .to_string();
         let req = ChatRequest {
-            model: self.default_model().to_string(),
+            model,
             messages: vec![ChatMessage {
                 role: "user".to_string(),
                 content: "ping".to_string(),

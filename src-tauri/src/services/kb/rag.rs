@@ -126,22 +126,23 @@ pub async fn bind_answer(
     if data::read_base(pool, kb_id).await?.is_none() {
         return Err("知识库不存在".to_string());
     }
-    let row = sqlx::query_as::<_, (String, String, String)>(
-        "SELECT type, model, status FROM channels WHERE id = ?1",
+    let row = sqlx::query_as::<_, (String, String, String, String)>(
+        "SELECT type, protocol, model, status FROM channels WHERE id = ?1",
     )
     .bind(channel_id)
     .fetch_optional(pool)
     .await
     .map_err(|e| e.to_string())?;
-    let Some((ctype, channel_model, status)) = row else {
+    let Some((ctype, cprotocol, channel_model, status)) = row else {
         return Err(format!("问答渠道不存在：{channel_id}"));
     };
     if status != "active" {
         return Err(format!("问答渠道已停用：{channel_id}"));
     }
-    // 类型须能被适配器工厂接受（Claude/Gemini 尚未实现会在绑定期即暴露）
-    create_adapter(&ctype, "http://placeholder.invalid", "k")
-        .map_err(|e| format!("渠道类型暂不支持问答: {e}"))?;
+    // 协议须能被适配器工厂接受（Claude/Gemini 原生协议尚未实现会在绑定期即暴露）
+    let protocol = crate::adapters::effective_protocol(&ctype, &cprotocol);
+    create_adapter(&protocol, "http://placeholder.invalid", "k")
+        .map_err(|e| format!("问答渠道协议暂不支持问答（{ctype}）: {e}"))?;
     let model = match model.map(str::trim).filter(|m| !m.is_empty()) {
         Some(m) => m.to_string(),
         None => {
@@ -501,8 +502,8 @@ impl KnowledgeBaseService {
             return Err("知识库已停用，无法问答".to_string());
         }
         let (channel_id, model) = bound_answer(pool, kb_id).await?;
-        let (ctype, base_url, api_key, status): (String, String, String, String) = sqlx::query_as(
-            "SELECT type, base_url, api_key_encrypted, status FROM channels WHERE id = ?1",
+        let (ctype, cprotocol, base_url, api_key, status): (String, String, String, String, String) = sqlx::query_as(
+            "SELECT type, protocol, base_url, api_key_encrypted, status FROM channels WHERE id = ?1",
         )
         .bind(&channel_id)
         .fetch_optional(pool)
@@ -512,7 +513,8 @@ impl KnowledgeBaseService {
         if status != "active" {
             return Err(format!("问答渠道已停用：{channel_id}，请重新绑定或换绑"));
         }
-        let adapter = create_adapter(&ctype, &base_url, &api_key)
+        let protocol = crate::adapters::effective_protocol(&ctype, &cprotocol);
+        let adapter = create_adapter(&protocol, &base_url, &api_key)
             .map_err(|e| format!("问答渠道配置错误: {e}"))?;
 
         // 检索上下文（策略层：重排 / 阈值 / 邻居扩展；hybrid 不可用降级关键词）
@@ -619,7 +621,7 @@ mod tests {
         schema::apply_schema_direct(&pool).await.unwrap();
         // 最小渠道表（绑定校验 + ChannelEmbedder/适配器运行时读取）
         sqlx::query(
-            "CREATE TABLE channels (id TEXT PRIMARY KEY, name TEXT, type TEXT, base_url TEXT, \
+            "CREATE TABLE channels (id TEXT PRIMARY KEY, name TEXT, type TEXT, protocol TEXT NOT NULL DEFAULT '', base_url TEXT, \
              model TEXT, status TEXT, api_key_encrypted TEXT)",
         )
         .execute(&pool)

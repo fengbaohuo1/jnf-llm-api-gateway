@@ -8,6 +8,8 @@ pub struct Channel {
     pub name: String,
     #[serde(rename = "type")]
     pub type_: String,
+    /// 显式上游协议（openai/deepseek/anthropic/gemini）；空串 = 按渠道类型自动推导
+    pub protocol: String,
     pub base_url: String,
     pub model: String,
     pub status: String,
