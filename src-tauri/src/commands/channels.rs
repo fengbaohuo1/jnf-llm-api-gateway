@@ -134,9 +134,10 @@ pub async fn update_channel(
     api_key: String,
     priority: i64,
     weight: i64,
-    price_per_1k_tokens: f64,
-    cache_price_per_1k_tokens: f64,
-    reasoning_price_per_1k_tokens: f64,
+    // None = 保持原值（通配渠道不再有默认价输入，避免编辑时把旧单价清零）
+    price_per_1k_tokens: Option<f64>,
+    cache_price_per_1k_tokens: Option<f64>,
+    reasoning_price_per_1k_tokens: Option<f64>,
     // 按模型定价（模型名 → 价格，元/1k）；None = 保持原值，空对象 = 清空
     model_prices: Option<serde_json::Value>,
 ) -> Result<(), String> {
@@ -147,7 +148,10 @@ pub async fn update_channel(
     sqlx::query(
         "UPDATE channels SET name = ?2, type = ?3, protocol = ?4, compat_reasoning_content = ?5, base_url = ?6, model = ?7, models = ?8, status = ?9,
                 api_key_encrypted = CASE WHEN ?10 = '' THEN api_key_encrypted ELSE ?10 END,
-                priority = ?11, weight = ?12, price_per_1k_tokens = ?13, cache_price_per_1k_tokens = ?14, reasoning_price_per_1k_tokens = ?15,
+                priority = ?11, weight = ?12,
+                price_per_1k_tokens = CASE WHEN ?13 IS NULL THEN price_per_1k_tokens ELSE ?13 END,
+                cache_price_per_1k_tokens = CASE WHEN ?14 IS NULL THEN cache_price_per_1k_tokens ELSE ?14 END,
+                reasoning_price_per_1k_tokens = CASE WHEN ?15 IS NULL THEN reasoning_price_per_1k_tokens ELSE ?15 END,
                 model_prices = CASE WHEN ?16 IS NULL THEN model_prices ELSE ?16 END, updated_at = ?17
          WHERE id = ?1",
     )
@@ -242,7 +246,7 @@ pub async fn test_channel(state: State<'_, DbState>, id: String) -> Result<serde
         Err(e) => {
             let code = adapter_error_code(&e);
             let message = e.to_string();
-            sqlx::query("UPDATE channels SET status = 'error', latency_ms = NULL, updated_at = ?2 WHERE id = ?1")
+            sqlx::query("UPDATE channels SET latency_ms = NULL, updated_at = ?2 WHERE id = ?1")
                 .bind(&id)
                 .bind(now_iso())
                 .execute(pool(&state))
@@ -259,10 +263,10 @@ pub async fn test_channel(state: State<'_, DbState>, id: String) -> Result<serde
         }
     };
 
-    // 3. 更新渠道状态与延迟
+    // 3. 只更新延迟，不改变业务状态（测试是诊断动作，失败不应把渠道摘出调度队列）
     if result.ok {
         let latency: Option<i64> = result.latency_ms.map(|v| v as i64);
-        sqlx::query("UPDATE channels SET status = 'active', latency_ms = ?2, updated_at = ?3 WHERE id = ?1")
+        sqlx::query("UPDATE channels SET latency_ms = ?2, updated_at = ?3 WHERE id = ?1")
             .bind(&id)
             .bind(latency)
             .bind(now_iso())
@@ -270,7 +274,7 @@ pub async fn test_channel(state: State<'_, DbState>, id: String) -> Result<serde
             .await
             .map_err(|e| e.to_string())?;
     } else {
-        sqlx::query("UPDATE channels SET status = 'error', latency_ms = NULL, updated_at = ?2 WHERE id = ?1")
+        sqlx::query("UPDATE channels SET latency_ms = NULL, updated_at = ?2 WHERE id = ?1")
             .bind(&id)
             .bind(now_iso())
             .execute(pool(&state))
@@ -498,16 +502,24 @@ pub(crate) fn parse_deepseek_pricing_text(
     text: &str,
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
     let name_re = regex::Regex::new(r"deepseek-[a-z0-9][a-z0-9.-]*").ok()?;
-    let header_pos = text.find("模型")?;
-    let window: String = text[header_pos..text.len().min(header_pos + 400)].to_string();
+    // 页面 <title> 也含“模型”二字，不能取首个“模型”直接切片：
+    // 逐个“模型”锚点尝试，直到窗口内出现 deepseek-* 模型名（用 chars 安全截取，避免多字节切分 panic）
     let mut names: Vec<String> = Vec::new();
-    for m in name_re.find_iter(&window) {
-        let name = m.as_str();
-        if name == "deepseek.com" || name == "deepseek-ai" {
-            continue;
+    for (pos, _) in text.match_indices("模型") {
+        let window: String = text[pos..].chars().take(400).collect();
+        let mut found: Vec<String> = Vec::new();
+        for m in name_re.find_iter(&window) {
+            let name = m.as_str();
+            if name == "deepseek.com" || name == "deepseek-ai" {
+                continue;
+            }
+            if !found.iter().any(|n| n == name) {
+                found.push(name.to_string());
+            }
         }
-        if !names.iter().any(|n| n == name) {
-            names.push(name.to_string());
+        if !found.is_empty() {
+            names = found;
+            break;
         }
     }
     if names.is_empty() {
@@ -621,6 +633,18 @@ mod deepseek_price_tests {
     fn rejects_unparseable_text() {
         assert!(parse_deepseek_pricing_text("hello world").is_none());
         assert!(parse_deepseek_pricing_text("").is_none());
+    }
+
+    #[test]
+    fn skips_title_model_anchor_before_price_table() {
+        // 页面 <title> 里的“模型”在前，且后面 400 字符内只有导航文本；解析器应继续找表格里的“模型”
+        let filler = "导航".repeat(300);
+        let text = format!(
+            "模型 & 价格 | DeepSeek API Docs {filler} 模型 deepseek-flash (1) deepseek-v4-pro BASE URL (OpenAI 格式) https://api.deepseek.com 价格 (2) 百万tokens输入 （缓存命中） 空闲时段 0.02元 0.15元 高峰时段 0.04元 0.30元 百万tokens输入 （缓存未命中） 空闲时段 1元 4.5元 高峰时段 2元 9.0元 百万tokens输出 空闲时段 4元 13.5元 高峰时段 8元 27.0元 并发限制 (3) 2500 500"
+        );
+        let models = parse_deepseek_pricing_text(&text).expect("pricing parsed");
+        assert!(models.contains_key("deepseek-flash"));
+        assert!(models.contains_key("deepseek-v4-pro"));
     }
 
     #[test]

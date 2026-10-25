@@ -60,6 +60,28 @@ async fn handle_mcp(
 
     // 可选 Bearer 鉴权（令牌每次请求实时读取 → 轮换立即生效）
     let cfg = McpConfig::load(&state.pool).await;
+    // 兜底：监听 0.0.0.0 时必须带令牌（防止先开 0.0.0.0 再清空令牌绕过 init 校验）
+    if cfg.host.trim() == "0.0.0.0"
+        && cfg.token.as_deref().map(str::trim).unwrap_or("").is_empty()
+    {
+        record_call(
+            &state.pool,
+            "http/forbidden",
+            None,
+            false,
+            Some("0.0.0.0 监听但未配置令牌"),
+            0,
+            headers
+                .get(header::USER_AGENT)
+                .and_then(|v| v.to_str().ok()),
+        )
+        .await;
+        return text_response(
+            StatusCode::FORBIDDEN,
+            "application/json",
+            "{\"error\":\"拒绝访问：监听 0.0.0.0 时必须配置 Bearer 令牌\"}".to_string(),
+        );
+    }
     let client = headers
         .get(header::USER_AGENT)
         .and_then(|v| v.to_str().ok())

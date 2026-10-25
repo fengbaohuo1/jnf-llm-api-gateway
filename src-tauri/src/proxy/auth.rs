@@ -86,6 +86,8 @@ pub(crate) async fn authenticate(pool: &SqlitePool, token: Option<&str>) -> Resu
         return Err(AuthError::Forbidden("密钥已禁用".into()));
     }
     if let Some(exp) = expires_at {
+        // 前端只传日期（YYYY-MM-DD）：按当天 23:59:59 截止，避免当天 0 点就失效
+        let exp = if exp.len() == 10 { format!("{exp} 23:59:59") } else { exp };
         if exp.as_str() < now_iso().as_str() {
             record_auth_event(pool, Some(&id), false, Some("密钥已过期")).await;
             return Err(AuthError::Forbidden("密钥已过期".into()));

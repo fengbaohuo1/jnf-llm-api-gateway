@@ -93,6 +93,8 @@ pub async fn serve(pool: SqlitePool, scanner: Arc<dyn SecurityScanner>) {
         .route("/v1/models", get(handlers::handle_models))
         .route("/health", get(handlers::handle_health))
         .fallback(handlers::handle_not_found)
+        // axum 对 Bytes 提取器默认限制 2MB；放宽到 32MB 以支持 base64 图片/长上下文
+        .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024))
         .with_state(state);
 
     let addr = format!("{host}:{port}");

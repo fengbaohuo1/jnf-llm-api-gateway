@@ -271,9 +271,15 @@ impl StreamStats {
                 }
             };
 
-            // 精确 token 统计（stream_options.include_usage 时上游在流尾返回）
+            // 精确 token 统计（stream_options.include_usage 时上游在流尾返回；
+            // 其余 chunk 的 "usage" 常为 null，不能覆盖成 0，否则会绕过估算兜底）
             if let Some(usage) = event.get("usage") {
-                self.exact_usage = Some(extract_usage(Some(usage)));
+                if usage.is_object() {
+                    let parsed = extract_usage(Some(usage));
+                    if parsed.prompt > 0 || parsed.completion > 0 {
+                        self.exact_usage = Some(parsed);
+                    }
+                }
             }
 
             // 所有 choices 的增量：正文 / 工具调用参数都做字符统计 + 扫描脱敏 + 泄露比对
@@ -285,6 +291,25 @@ impl StreamStats {
                             let (a, b) = count_chars(s);
                             self.completion_chars.0 += a;
                             self.completion_chars.1 += b;
+                            if self.security_enabled {
+                                let result = self.scanner.scan(s).await;
+                                self.response_findings.extend(result.findings.clone());
+                                if let Some(leak) = check_leak(s, &self.request_secrets) {
+                                    self.response_findings.push(leak);
+                                }
+                                if (self.security_mode == "block" && result.risk >= RiskLevel::High)
+                                    || decide(&result.findings) == PolicyDecision::Block
+                                {
+                                    blocked_now = true;
+                                }
+                                *s = result.sanitized;
+                            }
+                        }
+                    }
+                    // 思考内容（DeepSeek reasoning_content）同样扫描/脱敏/泄露比对，
+                    // 与非流式的全字符串叶子扫描保持一致（不参与 completion 字符估算，避免重复计数）
+                    if let Some(reasoning) = choice.pointer_mut("/delta/reasoning_content") {
+                        if let Value::String(s) = reasoning {
                             if self.security_enabled {
                                 let result = self.scanner.scan(s).await;
                                 self.response_findings.extend(result.findings.clone());

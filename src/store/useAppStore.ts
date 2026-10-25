@@ -42,9 +42,9 @@ interface AppState {
     apiKey: string;
     priority: number;
     weight: number;
-    pricePer1kTokens: number;
-    cachePricePer1kTokens: number;
-    reasoningPricePer1kTokens: number;
+    pricePer1kTokens: number | undefined;
+    cachePricePer1kTokens: number | undefined;
+    reasoningPricePer1kTokens: number | undefined;
     modelPrices?: Record<string, ModelPrice>;
   }) => Promise<void>;
   removeChannel: (id: string) => Promise<void>;

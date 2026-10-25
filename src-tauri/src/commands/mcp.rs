@@ -172,6 +172,15 @@ pub async fn mcp_clear_token(
     app: tauri::AppHandle,
     state: State<'_, DbState>,
 ) -> Result<(), String> {
+    // 监听 0.0.0.0 时清空令牌 = 局域网无鉴权，必须拒绝（先改回 127.0.0.1 再清）
+    let host: Option<(String,)> =
+        sqlx::query_as("SELECT value FROM settings WHERE key = 'services.mcp.host'")
+            .fetch_optional(pool(&state))
+            .await
+            .map_err(|e| e.to_string())?;
+    if host.map(|(h,)| h.trim() == "0.0.0.0").unwrap_or(false) {
+        return Err("当前监听 0.0.0.0，必须保留访问令牌；请先把监听范围改回 127.0.0.1".into());
+    }
     persist_setting(&app, pool(&state), "mcp", "services.mcp.token", "").await
 }
 

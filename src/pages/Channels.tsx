@@ -899,9 +899,9 @@ export function Channels() {
     for (const m of data.models) {
       const p = data.modelPrices[m];
       if (!p) continue;
-      const input = per1k(parseFloat(p.inputPerM) || 0);
-      const cacheHit = per1k(parseFloat(p.cacheHitPerM) || 0);
-      const output = per1k(parseFloat(p.outputPerM) || 0);
+      const input = Math.max(0, per1k(parseFloat(p.inputPerM) || 0));
+      const cacheHit = Math.max(0, per1k(parseFloat(p.cacheHitPerM) || 0));
+      const output = Math.max(0, per1k(parseFloat(p.outputPerM) || 0));
       if (input <= 0 && cacheHit <= 0 && output <= 0) continue;
       const entry: ModelPrice = { input, cacheHit, output, reasoning: 0 };
       if (p.offPeak) {
@@ -912,13 +912,22 @@ export function Channels() {
     const firstPriced = data.models
       .map((m) => modelPrices[m])
       .find((p) => p && (p.input > 0 || p.cacheHit > 0 || p.output > 0));
-    const price = {
-      // 渠道默认单价保留给「未配置模型的通配渠道 / 未知模型」兜底：取第一个已定价模型
+    // 有按模型价格时才同步渠道默认价（旧数据兜底）；没有则编辑时保留原值，避免把旧默认单价清零
+    const hasModelPrices = Object.keys(modelPrices).length > 0;
+    const priceDefaults = {
       pricePer1kTokens: firstPriced?.input ?? 0,
       cachePricePer1kTokens: firstPriced?.cacheHit ?? 0,
       reasoningPricePer1kTokens: firstPriced?.reasoning ?? 0,
-      modelPrices,
     };
+    const price = { ...priceDefaults, modelPrices };
+    const priceForUpdate = hasModelPrices
+      ? price
+      : {
+          pricePer1kTokens: undefined,
+          cachePricePer1kTokens: undefined,
+          reasoningPricePer1kTokens: undefined,
+          modelPrices,
+        };
     try {
       if (editing) {
         await updateChannel({
@@ -933,7 +942,7 @@ export function Channels() {
           apiKey: data.apiKey,
           priority: data.priority,
           weight: data.weight,
-          ...price,
+          ...priceForUpdate,
         });
         // 编辑后（Key/端点可能变化）重新查询余额
         balanceRequested.current.delete(editing.id);
