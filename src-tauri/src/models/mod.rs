@@ -10,6 +10,8 @@ pub struct Channel {
     pub type_: String,
     /// 显式上游协议（openai/deepseek/anthropic/gemini）；空串 = 按渠道类型自动推导
     pub protocol: String,
+    /// DeepSeek 思考模式兼容：转发时给带 tool_calls 的 assistant 消息补空 reasoning_content
+    pub compat_reasoning_content: bool,
     pub base_url: String,
     pub model: String,
     pub status: String,

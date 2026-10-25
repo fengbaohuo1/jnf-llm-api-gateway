@@ -3,7 +3,7 @@ import { Pencil, Plus, Trash2, Cable, Search, ChevronDown, RefreshCw } from "luc
 import { channelTypes, providerPresets, protocolOptions, autoProtocol } from "../data/mock";
 import type { Channel, ChannelProtocol, ChannelStatus, ChannelType } from "../types";
 import { useAppStore } from "../store/useAppStore";
-import { PageHeader, Card } from "../components/ui";
+import { PageHeader, Card, Toggle } from "../components/ui";
 import { Button, Modal } from "../components/Modal";
 import { ChannelTypeBadge, StatusBadge } from "../components/Badge";
 import { api } from "../api";
@@ -13,6 +13,8 @@ type FormState = {
   type: ChannelType;
   /** 显式协议；"" = 按渠道类型自动推导 */
   protocol: ChannelProtocol | "";
+  /** DeepSeek 思考模式兼容：转发时给 tool_calls 轮次补空 reasoning_content */
+  compatReasoningContent: boolean;
   baseUrl: string;
   model: string;
   apiKey: string;
@@ -29,6 +31,7 @@ const emptyForm: FormState = {
   name: "",
   type: "OpenAI",
   protocol: "",
+  compatReasoningContent: true,
   baseUrl: "",
   model: "",
   apiKey: "",
@@ -46,7 +49,7 @@ const perM = (per1k: number) => (per1k > 0 ? parseFloat((per1k * 1000).toFixed(6
 const per1k = (perM: number) => Math.round((perM / 1000) * 1e9) / 1e9;
 
 const inputCls =
-  "w-full rounded-md border border-strong px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
+  "w-full rounded-lg border border-transparent bg-inset px-3 py-1.5 text-sm text-main transition-colors placeholder:text-faint focus:border-transparent focus:bg-card focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -62,7 +65,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 function Accordion({ title, children }: { title: string; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="overflow-hidden rounded-lg border border-edge">
+    <div className="overflow-hidden rounded-xl bg-inset/50">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -71,7 +74,7 @@ function Accordion({ title, children }: { title: string; children: React.ReactNo
         {title}
         <ChevronDown size={16} className={`shrink-0 text-faint transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
-      {open && <div className="border-t border-edge p-3">{children}</div>}
+      {open && <div className="border-t border-edge/40 p-3">{children}</div>}
     </div>
   );
 }
@@ -181,7 +184,7 @@ function ChannelFormModal({
   }, [open, isDeepSeek, channelId, form.apiKey, form.baseUrl]);
 
   const chip =
-    "rounded-md border border-strong px-2 py-0.5 font-mono text-[11px] text-sub transition-colors hover:bg-accent-soft hover:text-accent";
+    "rounded-md bg-inset px-2 py-0.5 font-mono text-[11px] text-sub transition-colors hover:bg-accent-soft hover:text-accent";
 
   return (
     <Modal open={open} title={initial ? "编辑渠道" : "添加渠道"} onClose={onClose}>
@@ -212,7 +215,7 @@ function ChannelFormModal({
           </Field>
         </div>
         <div className="grid grid-cols-2 gap-4">
-          <Field label="渠道协议" hint="决定连通性测试 / 知识库问答使用的适配器；代理转发统一走 OpenAI 兼容 /chat/completions">
+          <Field label="渠道协议" hint="决定连通性测试 / 知识库问答用的适配器">
             <select
               value={form.protocol}
               onChange={(e) => changeProtocol(e.target.value as FormState["protocol"])}
@@ -238,6 +241,21 @@ function ChannelFormModal({
             原生协议适配器（Anthropic / Gemini）尚未实现：连通性测试与知识库问答会失败。可把协议改为「OpenAI
             兼容」，接入厂商的 OpenAI 兼容端点后使用。
           </p>
+        )}
+        {isDeepSeek && (
+          <div className="flex items-center justify-between gap-3 rounded-xl bg-inset/60 px-3 py-2.5">
+            <div>
+              <p className="text-sm font-medium text-sub">DeepSeek 思考模式兼容</p>
+              <p className="text-xs text-faint">
+                转发时给带 tool_calls 的 assistant 消息补空 reasoning_content——DeepSeek
+                思考模型要求工具调用轮次回传该字段，否则工具执行后的下一轮会 400
+              </p>
+            </div>
+            <Toggle
+              checked={form.compatReasoningContent}
+              onChange={(v) => setForm((f) => ({ ...f, compatReasoningContent: v }))}
+            />
+          </div>
         )}
         <Field
           label="Base URL"
@@ -459,6 +477,7 @@ export function Channels() {
           name: data.name,
           type: data.type,
           protocol: data.protocol,
+          compatReasoningContent: data.compatReasoningContent,
           baseUrl: data.baseUrl,
           model: data.model,
           status: data.status,
@@ -472,6 +491,7 @@ export function Channels() {
           name: data.name,
           type: data.type,
           protocol: data.protocol,
+          compatReasoningContent: data.compatReasoningContent,
           baseUrl: data.baseUrl,
           model: data.model,
           apiKey: data.apiKey,
@@ -582,7 +602,7 @@ export function Channels() {
 
       <Card className="p-0 overflow-x-auto">
         <table className="w-full text-left text-sm">
-          <thead className="border-b border-edge bg-inset text-xs text-muted">
+          <thead className="bg-inset/80 text-xs text-muted">
             <tr>
               <th className="px-3 py-2 font-medium">名称</th>
               <th className="px-3 py-2 font-medium">类型</th>
@@ -594,7 +614,7 @@ export function Channels() {
               <th className="px-3 py-2 text-right font-medium">操作</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-edge">
+          <tbody className="divide-y divide-edge/40">
             {filtered.map((c) => (
               <tr key={c.id} className="hover:bg-hover">
                 <td className="px-3 py-2">
@@ -607,6 +627,7 @@ export function Channels() {
                   <ChannelTypeBadge type={c.type} />
                   <p className="mt-0.5 text-[10px] text-faint" title="实际使用的上游协议">
                     {c.protocol ? `${c.protocol}（指定）` : `${autoProtocol(c.type)}（自动）`}
+                    {(c.protocol || autoProtocol(c.type)) === "deepseek" && c.compatReasoningContent ? " · 思考兼容" : ""}
                   </p>
                 </td>
                 <td className="px-3 py-2 text-muted">
@@ -679,6 +700,7 @@ export function Channels() {
           name: editing.name,
           type: editing.type,
           protocol: editing.protocol ?? "",
+          compatReasoningContent: editing.compatReasoningContent,
           baseUrl: editing.baseUrl,
           model: editing.model,
           apiKey: "",

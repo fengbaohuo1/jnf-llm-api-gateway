@@ -2,10 +2,10 @@ import type { ReactNode } from "react";
 
 export function PageHeader({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
   return (
-    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+    <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
       <div>
-        <h1 className="text-xl font-bold text-main">{title}</h1>
-        {description && <p className="mt-0.5 text-xs text-muted">{description}</p>}
+        <h1 className="text-2xl font-bold tracking-tight text-main">{title}</h1>
+        {description && <p className="mt-1 max-w-3xl text-sm text-muted">{description}</p>}
       </div>
       {actions && <div className="flex items-center gap-2">{actions}</div>}
     </div>
@@ -13,8 +13,10 @@ export function PageHeader({ title, description, actions }: { title: string; des
 }
 
 export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
+  // 调用方显式传了 p-* 时不再叠加默认内边距（避免 Tailwind 生成顺序导致覆盖不确定）
+  const padding = /(^|\s)p-/.test(className) ? "" : "p-5";
   return (
-    <div className={`rounded-lg border border-edge bg-card p-4 shadow-sm ${className}`}>
+    <div className={`rounded-2xl bg-card ${padding} shadow-card ${className}`}>
       {children}
     </div>
   );

@@ -36,11 +36,6 @@ pub(crate) struct ProxySettings {
     pub(crate) security_mode: String,
     /// 内容明细存储级别：all / low / medium / high / none（见 [`content_allowed`]）
     pub(crate) log_store_level: String,
-    /// DeepSeek 思考模式兼容：转发给 protocol=deepseek 的渠道时，
-    /// 给"带 tool_calls 的 assistant 消息"补一个空 `reasoning_content`。
-    /// DeepSeek 要求思考模式下的 tool-call 轮次把 reasoning_content 回传，
-    /// 而 OpenAI 协议客户端（Codex/自研 Agent）通常不回传，导致第二轮 400。
-    pub(crate) compat_deepseek_reasoning: bool,
 }
 
 impl Default for ProxySettings {
@@ -52,7 +47,6 @@ impl Default for ProxySettings {
             security_enabled: true,
             security_mode: "replace".to_string(),
             log_store_level: "all".to_string(),
-            compat_deepseek_reasoning: true,
         }
     }
 }
@@ -71,7 +65,7 @@ impl ProxySettings {
 
 pub(crate) async fn read_settings(pool: &SqlitePool) -> ProxySettings {
     let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT key, value FROM settings WHERE key IN ('server.enabled','server.port','failover.enabled','failover.max_attempts','security.enabled','security.mode','log.store_level','log.content_enabled','compat.deepseek_reasoning')",
+        "SELECT key, value FROM settings WHERE key IN ('server.enabled','server.port','failover.enabled','failover.max_attempts','security.enabled','security.mode','log.store_level','log.content_enabled')",
     )
     .fetch_all(pool)
     .await
@@ -112,9 +106,6 @@ pub(crate) async fn read_settings(pool: &SqlitePool) -> ProxySettings {
             })
         })
         .unwrap_or_else(|| "all".to_string());
-    if let Some(v) = map.get("compat.deepseek_reasoning") {
-        s.compat_deepseek_reasoning = v == "true";
-    }
     s
 }
 

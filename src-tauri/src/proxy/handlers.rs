@@ -426,9 +426,9 @@ fn should_block(mode: &str, result: &ScanResult) -> bool {
 fn body_for_channel<'a>(
     body: &'a Value,
     channel: &ChannelChoice,
-    compat_deepseek_reasoning: bool,
+    compat_reasoning_content: bool,
 ) -> Cow<'a, Value> {
-    if !compat_deepseek_reasoning || channel.protocol != "deepseek" {
+    if !compat_reasoning_content || channel.protocol != "deepseek" {
         return Cow::Borrowed(body);
     }
     let Some(messages) = body.get("messages").and_then(|m| m.as_array()) else {
@@ -607,7 +607,7 @@ async fn handle_non_stream_completion(
         let forward_body = body_for_channel(
             &prepared.body,
             channel,
-            prepared.settings.compat_deepseek_reasoning,
+            channel.compat_reasoning_content,
         );
         match forward_to_channel(&state.client, channel, forward_body.as_ref()).await {
             Ok(mut resp_value) => {
@@ -830,7 +830,7 @@ async fn handle_stream_completion(
         let forward_body = body_for_channel(
             &prepared.body,
             channel,
-            prepared.settings.compat_deepseek_reasoning,
+            channel.compat_reasoning_content,
         );
         match forward_stream_to_channel(&state, channel, forward_body.as_ref()).await {
             Ok(upstream) => {

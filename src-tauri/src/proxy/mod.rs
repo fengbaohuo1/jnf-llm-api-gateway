@@ -195,6 +195,7 @@ pub(crate) mod test_util {
             name: "测试渠道".into(),
             channel_type: "OpenAI".into(),
             protocol: "openai".into(),
+            compat_reasoning_content: true,
             base_url: base_url.into(),
             api_key: "k".into(),
             model: "gpt-4o".into(),

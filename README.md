@@ -58,7 +58,7 @@ LLM API Gateway 把这些收进一个桌面应用：客户端只指向**一个�
 - 渠道级配置：Base URL、API Key、模型、状态、优先级、权重，以及输入 / 输出 / 缓存命中 / 思考输出四项单价（界面按「元 / 百万 tokens」录入，内部按每 1k 存储，成本统一显示 `¥`）。
 - **模型配置更省事**：按渠道类型预填常见 Base URL；点「获取模型」从上游 `GET /models` 拉取真实模型列表后点选（编辑已有渠道时复用已保存的 Key），DeepSeek 渠道打开编辑会自动通过接口加载模型，也可手填模型 ID；模型留空表示匹配任意模型。
 - **渠道协议可选**：类型（OpenAI / DeepSeek / Custom…）决定品牌与默认值，协议（自动 / OpenAI 兼容 / DeepSeek / Anthropic / Gemini）决定实际适配器；自定义渠道可显式选协议，接入任意 OpenAI 兼容端点，或声明 DeepSeek 协议以启用思考模式兼容。
-- **DeepSeek 思考模式兼容（默认开启）**：DeepSeek 思考模型要求工具调用轮次的 assistant 消息回传 `reasoning_content`，而按 OpenAI 协议实现的客户端通常不回传。网关转发到 DeepSeek 协议渠道时自动补空占位（已有值不覆盖），可在「设置 → 代理与安全」关闭。
+- **DeepSeek 思考模式兼容（渠道级开关，默认开启）**：DeepSeek 思考模型要求工具调用轮次的 assistant 消息回传 `reasoning_content`，而按 OpenAI 协议实现的客户端通常不回传。网关转发到 DeepSeek 协议渠道时自动补空占位（已有值不覆盖）；开关在渠道编辑弹窗内（仅 DeepSeek 协议渠道显示），可按渠道单独关闭。
 
 ### 上游渠道支持
 
@@ -285,7 +285,6 @@ curl http://127.0.0.1:8787/v1/responses \
 | `server.enabled` | `true` | 关闭后代理请求返回 503（`/health` 与 `/v1/models` 不受影响） |
 | `failover.enabled` | `false` | 故障转移开关 |
 | `failover.max_attempts` | `3` | 单请求最多尝试的渠道数 |
-| `compat.deepseek_reasoning` | `true` | DeepSeek 思考模式兼容：给带 `tool_calls` 的 assistant 消息补空 `reasoning_content`（已有值不覆盖） |
 | `security.enabled` | `true` | 安全扫描总开关 |
 | `security.mode` | `replace` | `replace` 脱敏后放行 / `block` 拦截高危内容 |
 | `log.store_level` | `all` | 内容明细存储级别：`all` / `low` / `medium` / `high` / `none`（按请求最高风险判定；无风险请求在阈值级别下只存概要） |
@@ -303,6 +302,8 @@ curl http://127.0.0.1:8787/v1/responses \
 | `kb.retrieval.rrfWeightVector` / `rrfWeightKeyword` | `1.0` / `0.7` | RRF 融合权重 |
 | `kb.retrieval.perDocCap` | `2` | 每篇文档最多保留块数 |
 | `kb.retrieval.neighborExpand` | `true` | 命中块邻居扩展 |
+
+渠道级配置存在 `channels` 表（不写 `settings.json`）：`protocol`（协议，空 = 按类型自动推导）、`compat_reasoning_content`（DeepSeek 思考模式兼容，默认开）、`priority` / `weight` 与四项单价；界面均在「渠道」编辑弹窗内。
 
 > 默认只监听 `127.0.0.1`，且 MCP 令牌为空时不做 Bearer 校验。如需让其他机器访问，请同时改 `host` 并设置令牌——这相当于把上游 Key 的代理能力开放出去。
 
@@ -354,7 +355,7 @@ curl http://127.0.0.1:8787/v1/responses \
 │   ├── src/services/mcp/       # MCP：JSON-RPC 协议、13 个工具、HTTP 服务、配置
 │   ├── src/commands/           # Tauri 命令（渠道 / 密钥 / 请求 / 安全 / 设置 / 统计 / KB / MCP）
 │   ├── src/config.rs           # settings.json 导入 / 导出 / 热重载
-│   ├── migrations/             # sqlx 迁移 0001–0011（不可变）
+│   ├── migrations/             # sqlx 迁移 0001–0013（不可变）
 │   └── src/models/ db/         # 数据模型与连接池
 ├── kb/
 │   ├── samples/                # 5 篇中文样例文档（导入用）
@@ -421,7 +422,7 @@ cargo test
 内容明细受「设置 → 通用设置 → 日志内容存储级别」控制：选择「低风险及以上 / 中及以上 / 高及以上」时，未达阈值的请求只保留概要；关闭安全扫描后无法判定风险，阈值级别也不会保存内容。需要完整正文时切回「全存」。概要、Token、计费、安全事件始终记录，不受该级别影响。
 
 **DeepSeek 报错 `The reasoning_content in the thinking mode must be passed back to the API.`？**
-这是 DeepSeek 思考模型的要求：工具调用后的 assistant 消息必须回传 `reasoning_content`，而按 OpenAI 协议实现的客户端（Codex、自研 Agent 等）通常只回传 `tool_calls`。确认「设置 → 代理与安全 → DeepSeek 思考模式兼容」已开启（默认开启），网关会补空占位；客户端自己回传了真实 reasoning 内容时不会被覆盖。该兼容只在渠道协议为 `deepseek` 时生效。
+这是 DeepSeek 思考模型的要求：工具调用后的 assistant 消息必须回传 `reasoning_content`，而按 OpenAI 协议实现的客户端（Codex、自研 Agent 等）通常只回传 `tool_calls`。确认该 DeepSeek 渠道在编辑弹窗中开启「DeepSeek 思考模式兼容」（默认开启），网关会补空占位；客户端自己回传了真实 reasoning 内容时不会被覆盖。该兼容只在渠道协议为 `deepseek` 时生效。
 
 **渠道连通性测试报 HTTP 400，但代理请求正常？**
 测试会使用渠道配置的「默认模型」发一个最小请求（旧版本曾用厂商默认模型，导致 DeepSeek 等渠道误报 400）；请把模型填成上游真实模型 ID，或点「获取模型」从 `/models` 选择。

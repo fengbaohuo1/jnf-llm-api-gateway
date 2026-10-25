@@ -10,35 +10,43 @@
      用法：bg-app / bg-card / bg-inset / bg-hover / bg-accent-soft /
           text-main / text-sub / text-muted / text-faint / text-accent /
           border-edge / border-strong / divide-edge / ring-edge /
-          placeholder-faint 等工具类由 Tailwind 4 自动生成。 */
-  --color-app: #f9fafb; /* 页面底色（原 gray-50） */
-  --color-card: #ffffff; /* 卡片 / 弹窗 / 侧边栏（原 white） */
-  --color-inset: #f3f4f6; /* 输入框 / 代码块 / 凹陷底（原 gray-100） */
-  --color-hover: #f3f4f6; /* 悬浮底色（原 gray-100） */
-  --color-edge: #e5e7eb; /* 常规边框（原 gray-200） */
-  --color-strong: #d1d5db; /* 强调边框（原 gray-300） */
-  --color-main: #111827; /* 主文字（原 gray-900） */
-  --color-sub: #374151; /* 次要文字（原 gray-700） */
-  --color-muted: #6b7280; /* 弱文字（原 gray-500） */
-  --color-faint: #9ca3af; /* 最弱文字 / 占位符（原 gray-400） */
-  --color-accent: #4338ca; /* 强调文字（原 indigo-700） */
-  --color-accent-soft: #eef2ff; /* 强调浅底（原 indigo-50） */
+          placeholder-faint 等工具类由 Tailwind 4 自动生成。
+     设计取向：卡片靠「底色差 + 阴影」分层，尽量不用线条框边。 */
+  --color-app: #f1f4f9; /* 页面底色（比卡片略深，形成自然边界） */
+  --color-card: #ffffff; /* 卡片 / 弹窗 / 侧边栏 */
+  --color-inset: #edf0f6; /* 输入框 / 代码块 / 凹陷底 */
+  --color-hover: #e8edf6; /* 悬浮底色 */
+  --color-edge: #e2e7f1; /* 常规分割线（低对比） */
+  --color-strong: #cbd3e2; /* 强调边框 */
+  --color-main: #0f172a; /* 主文字 */
+  --color-sub: #334155; /* 次要文字 */
+  --color-muted: #64748b; /* 弱文字 */
+  --color-faint: #94a3b8; /* 最弱文字 / 占位符 */
+  --color-accent: #4f46e5; /* 强调文字 */
+  --color-accent-soft: #eef2ff; /* 强调浅底 */
+
+  /* 卡片 / 弹窗阴影（暗色主题覆盖为更深、更低透明度的光晕） */
+  --shadow-card: 0 1px 2px 0 rgb(15 23 42 / 0.03), 0 12px 32px -20px rgb(15 23 42 / 0.22);
+  --shadow-pop: 0 24px 64px -24px rgb(15 23 42 / 0.45);
 }
 
 /* 暗色主题：覆盖同一组 CSS 变量，所有变量类自动切换 */
 [data-theme="dark"] {
-  --color-app: #030712; /* gray-950 */
-  --color-card: #111827; /* gray-900 */
-  --color-inset: #1f2937; /* gray-800 */
-  --color-hover: #1f2937; /* gray-800 */
-  --color-edge: #374151; /* gray-700 */
-  --color-strong: #4b5563; /* gray-600 */
-  --color-main: #f9fafb; /* gray-50 */
-  --color-sub: #e5e7eb; /* gray-200 */
-  --color-muted: #9ca3af; /* gray-400 */
-  --color-faint: #6b7280; /* gray-500 */
-  --color-accent: #a5b4fc; /* indigo-300 */
-  --color-accent-soft: #1e1b4b; /* indigo-950 */
+  --color-app: #090b11; /* 页面底色 */
+  --color-card: #12161f; /* 卡片 / 弹窗 / 侧边栏 */
+  --color-inset: #1a1f2b; /* 输入框 / 代码块 / 凹陷底 */
+  --color-hover: #232a39; /* 悬浮底色 */
+  --color-edge: #262d3c; /* 常规分割线（低对比） */
+  --color-strong: #3b4457; /* 强调边框 */
+  --color-main: #f4f6fa; /* 主文字 */
+  --color-sub: #d6dce7; /* 次要文字 */
+  --color-muted: #94a3b8; /* 弱文字 */
+  --color-faint: #64748b; /* 最弱文字 / 占位符 */
+  --color-accent: #a5b4fc; /* 强调文字 */
+  --color-accent-soft: #1d1b46; /* 强调浅底 */
+
+  --shadow-card: 0 1px 2px 0 rgb(0 0 0 / 0.35), 0 14px 40px -24px rgb(0 0 0 / 0.85);
+  --shadow-pop: 0 28px 70px -28px rgb(0 0 0 / 0.9);
 }
 
 @layer base {

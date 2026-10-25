@@ -42,7 +42,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 const inputCls =
-  "w-full rounded-md border border-strong bg-card px-3 py-1.5 text-sm text-main focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
+  "w-full rounded-lg border border-transparent bg-inset px-3 py-1.5 text-sm text-main transition-colors placeholder:text-faint focus:border-transparent focus:bg-card focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
 
 const errOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -77,7 +77,7 @@ function ErrBar({ text }: { text: string | null }) {
 function BaseStatusBadge({ status }: { status: KnowledgeBase["status"] }) {
   if (status === "disabled") {
     return (
-      <span className="inline-flex items-center rounded-md bg-inset px-2 py-0.5 text-xs font-medium text-muted ring-1 ring-edge">
+      <span className="inline-flex items-center rounded-md bg-inset px-2 py-0.5 text-xs font-medium text-muted ">
         已停用
       </span>
     );
@@ -470,13 +470,13 @@ function BindModal({
         </div>
       )}
       {channels.length === 0 && (
-        <div className="mb-3 rounded-lg border border-edge bg-inset px-4 py-3 text-sm text-muted">
+        <div className="mb-3 rounded-xl bg-inset/70 px-4 py-3 text-sm text-muted">
           还没有任何渠道，请先到「渠道」页添加（如 OpenAI / DeepSeek / Custom）。
         </div>
       )}
 
       {/* 语义检索 embedding */}
-      <div className="mb-5 rounded-lg border border-edge p-3">
+      <div className="mb-5 rounded-xl bg-inset/50 p-3">
         <p className="text-sm font-semibold text-main">
           语义检索（embedding）
           <span className="ml-2 text-xs font-normal text-faint">关键词模式不需要；向量 / 混合检索需要</span>
@@ -530,7 +530,7 @@ function BindModal({
       </div>
 
       {/* 问答 RAG */}
-      <div className="rounded-lg border border-edge p-3">
+      <div className="rounded-xl bg-inset/50 p-3">
         <p className="text-sm font-semibold text-main">
           问答渠道（RAG）
           <span className="ml-2 text-xs font-normal text-faint">生成回答用；不填模型时默认取渠道模型</span>
@@ -719,7 +719,7 @@ function DocsTab({
     <div className="space-y-4">
       {/* 绑定与索引引导 */}
       {!embeddingReady && (
-        <div className="rounded-lg border border-edge bg-card px-4 py-3 text-sm text-muted">
+        <div className="rounded-xl bg-inset/60 px-4 py-3 text-sm text-muted">
           尚未绑定语义检索渠道：现在可以<span className="font-medium text-main">导入文档 + 关键词检索</span>；
           要使用向量 / 混合检索与 RAG 问答，请
           <button className="mx-1 font-medium text-indigo-600 hover:underline dark:text-indigo-400" onClick={onOpenBind}>
@@ -803,7 +803,7 @@ function DocsTab({
       {/* 文档列表 */}
       <Card className="p-0 overflow-x-auto">
         <table className="w-full text-left text-sm">
-          <thead className="border-b border-edge bg-inset text-xs text-muted">
+          <thead className="bg-inset/80 text-xs text-muted">
             <tr>
               <th className="px-3 py-2 font-medium">标题</th>
               <th className="px-3 py-2 font-medium">格式</th>
@@ -814,7 +814,7 @@ function DocsTab({
               <th className="px-3 py-2 text-right font-medium">操作</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-edge">
+          <tbody className="divide-y divide-edge/40">
             {docs?.map((d) => (
               <tr key={d.id} className="hover:bg-hover">
                 <td className="max-w-72 px-3 py-2">
@@ -824,7 +824,7 @@ function DocsTab({
                   <p className="text-xs text-faint">{d.charCount.toLocaleString()} 字符</p>
                 </td>
                 <td className="px-3 py-2">
-                  <span className="rounded bg-inset px-1.5 py-0.5 font-mono text-xs text-muted ring-1 ring-edge">{d.format}</span>
+                  <span className="rounded bg-inset px-1.5 py-0.5 font-mono text-xs text-muted ">{d.format}</span>
                 </td>
                 <td className="px-3 py-2 text-muted">{fmtBytes(d.fileSize) || "—"}</td>
                 <td className="px-3 py-2 text-muted">{d.chunkCount}</td>
@@ -1056,7 +1056,7 @@ function SearchTab({
   return (
     <div className="space-y-4">
       {!canVector && (
-        <div className="rounded-lg border border-edge bg-card px-4 py-3 text-xs text-muted">
+        <div className="rounded-xl bg-inset/60 px-4 py-3 text-xs text-muted">
           向量与混合检索需先绑定 embedding 渠道并构建索引（见「文档」页）；当前仅关键词可用。
         </div>
       )}
@@ -1072,7 +1072,7 @@ function SearchTab({
               }}
               title={m.desc}
               className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                mode === m.key ? "bg-indigo-600 text-white" : "border border-strong text-sub hover:bg-hover"
+                mode === m.key ? "bg-card text-accent shadow-sm" : "text-muted hover:text-sub"
               }`}
             >
               {m.label}
@@ -1136,7 +1136,7 @@ function SearchTab({
           <button
             key={h.chunkId}
             onClick={() => openChunk({ id: h.documentId, title: h.title }, h.chunkId)}
-            className="block w-full rounded-lg border border-edge bg-card p-3 text-left transition-colors hover:border-indigo-300 hover:bg-hover dark:hover:border-indigo-800"
+            className="block w-full rounded-xl bg-inset/40 p-3 text-left transition-colors hover:bg-inset"
           >
             <div className="flex items-center gap-2">
               <span className="w-5 shrink-0 text-right font-mono text-xs text-faint">{i + 1}</span>
@@ -1150,12 +1150,12 @@ function SearchTab({
           </button>
         ))}
         {hits && hits.length === 0 && (
-          <div className="rounded-lg border border-edge bg-card py-10 text-center text-sm text-faint">
+          <div className="rounded-xl bg-inset/40 py-10 text-center text-sm text-faint">
             没有命中{query.trim() ? `“${query.trim()}”` : ""}的分块
           </div>
         )}
         {!hits && !error && (
-          <div className="rounded-lg border border-dashed border-edge py-10 text-center text-sm text-faint">
+          <div className="rounded-lg border border-dashed border-edge/60 py-10 text-center text-sm text-faint">
             {ran ? "" : "输入查询内容开始检索；点击结果可查看命中的分块原文"}
           </div>
         )}
@@ -1317,8 +1317,8 @@ function ChatTab({
       ) : (
         <div className="flex min-h-0 flex-1">
           {/* 会话列表 */}
-          <div className="flex w-56 shrink-0 flex-col border-r border-edge">
-            <div className="flex items-center justify-between border-b border-edge px-3 py-2">
+          <div className="flex w-56 shrink-0 flex-col border-r border-edge/30">
+            <div className="flex items-center justify-between border-b border-edge/40 px-3 py-2">
               <p className="text-xs font-medium text-muted">会话</p>
               <div className="flex gap-1">
                 <button
@@ -1392,7 +1392,7 @@ function ChatTab({
               </div>
             ) : (
               <>
-                <div className="flex items-center gap-2 border-b border-edge px-4 py-2.5">
+                <div className="flex items-center gap-2 border-b border-edge/40 px-4 py-2.5">
                   <p className="truncate text-sm font-semibold text-main">{active.title}</p>
                   <span className="ml-auto shrink-0 text-xs text-faint">
                     {base.answerModel ?? ""}
@@ -1413,7 +1413,7 @@ function ChatTab({
                       </div>
                     ) : (
                       <div key={i} className="flex justify-start">
-                        <div className="max-w-[92%] rounded-lg border border-edge bg-inset/70 px-3 py-2.5">
+                        <div className="max-w-[92%] rounded-xl bg-inset/80 px-3 py-2.5">
                           <div className="mb-1 flex items-center gap-1.5 text-xs text-faint">
                             <Sparkles size={12} className="text-accent" />
                             {m.model ?? "模型回答"}
@@ -1421,7 +1421,7 @@ function ChatTab({
                           </div>
                           <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-main">{m.content}</p>
                           {m.citations.length > 0 && (
-                            <div className="mt-2 flex flex-wrap gap-1.5 border-t border-edge pt-2">
+                            <div className="mt-2 flex flex-wrap gap-1.5 border-t border-edge/40 pt-2">
                               {m.citations.map((c) => (
                                 <button
                                   key={`${c.n}-${c.chunkId}`}
@@ -1446,7 +1446,7 @@ function ChatTab({
                   )}
                   <div ref={bottomRef} />
                 </div>
-                <div className="border-t border-edge p-3">
+                <div className="border-t border-edge/40 p-3">
                   <div className="flex items-end gap-2">
                     <textarea
                       value={input}
@@ -1560,7 +1560,7 @@ function EvalTab({ base }: { base: KnowledgeBase }) {
               disabled={m.key !== "keyword" && !canVector}
               title={m.desc}
               className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-                mode === m.key ? "bg-indigo-600 text-white" : "border border-strong text-sub hover:bg-hover"
+                mode === m.key ? "bg-card text-accent shadow-sm" : "text-muted hover:text-sub"
               }`}
             >
               {m.label}
@@ -1617,10 +1617,10 @@ function EvalTab({ base }: { base: KnowledgeBase }) {
           </div>
 
           <Card className="p-0">
-            <div className="border-b border-edge px-4 py-2.5 text-sm font-medium text-main">
+            <div className="border-b border-edge/40 px-4 py-2.5 text-sm font-medium text-main">
               逐条结果
             </div>
-            <div className="divide-y divide-edge">
+            <div className="divide-y divide-edge/40">
               {report.cases.map((c, i) => (
                 <div key={i} className="flex items-start gap-3 px-4 py-2.5">
                   <span
@@ -1789,7 +1789,7 @@ export function KnowledgeBasePage() {
         <button
           onClick={toggleSide}
           title={sideOpen ? "收起知识库列表" : "展开知识库列表"}
-          className="flex shrink-0 items-center gap-1.5 rounded-md border border-strong px-2.5 py-1.5 text-sm text-sub transition-colors hover:bg-hover"
+          className="flex shrink-0 items-center gap-1.5 rounded-md bg-inset px-2.5 py-1.5 text-sm text-sub transition-colors hover:bg-hover"
         >
           {sideOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
           <span className="hidden md:inline">{sideOpen ? "收起列表" : "展开列表"}</span>
@@ -1916,7 +1916,7 @@ export function KnowledgeBasePage() {
               </div>
 
               {/* Tab 切换 */}
-              <div className="mb-4 inline-flex rounded-lg border border-edge bg-card p-0.5">
+              <div className="mb-4 inline-flex rounded-lg bg-inset p-1">
                 {TABS.map((t) => (
                   <button
                     key={t.key}

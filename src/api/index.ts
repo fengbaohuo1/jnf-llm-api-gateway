@@ -32,6 +32,7 @@ const mapChannel = (c: RawChannel): Channel => ({
   name: c.name,
   type: c.type as ChannelType,
   protocol: (c.protocol ?? "") as Channel["protocol"],
+  compatReasoningContent: c.compatReasoningContent ?? true,
   baseUrl: c.baseUrl,
   model: c.model,
   status: c.status as ChannelStatus,
@@ -94,6 +95,7 @@ export const api = {
     name: string;
     type: string;
     protocol: string;
+    compatReasoningContent: boolean;
     baseUrl: string;
     model: string;
     apiKey: string;
@@ -113,6 +115,7 @@ export const api = {
     name: string;
     type: string;
     protocol: string;
+    compatReasoningContent: boolean;
     baseUrl: string;
     model: string;
     status: string;
@@ -321,6 +324,7 @@ interface RawChannel {
   name: string;
   type: string;
   protocol: string;
+  compatReasoningContent: boolean;
   baseUrl: string;
   model: string;
   status: string;

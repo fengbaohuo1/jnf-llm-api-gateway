@@ -18,10 +18,10 @@ import type { McpCall, McpCallResult, McpStatus, McpToolInfo, McpToolKind } from
 const errOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 const inputCls =
-  "rounded-md border border-strong bg-card px-3 py-1.5 text-sm text-main focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
+  "rounded-lg border border-transparent bg-inset px-3 py-1.5 text-sm text-main transition-colors placeholder:text-faint focus:border-transparent focus:bg-card focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
 
 const KIND_STYLE: Record<McpToolKind, string> = {
-  read: "bg-inset text-muted ring-1 ring-edge",
+  read: "bg-inset text-muted ",
   write: "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
   dangerous: "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300",
 };
@@ -49,7 +49,7 @@ function argsTemplate(tool: McpToolInfo): string {
 
 function curlExample(status: McpStatus, tool: McpToolInfo): string {
   const args = argsTemplate(tool).replace(/\n\s*/g, "");
-  const auth = status.tokenSet ? " \\\n  -H 'authorization: Bearer <你的令牌>'" : "";
+  const auth = status.tokenSet ? "\\\n -H 'authorization: Bearer <你的令牌>'" : "";
   return `curl -s ${status.endpoint} \\
   -H 'content-type: application/json'${auth} \\
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"${tool.name}","arguments":${args}}}'`;
@@ -210,7 +210,7 @@ export function Mcp() {
     ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
     : status?.enabled
       ? "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
-      : "bg-inset text-muted ring-1 ring-edge";
+      : "bg-inset text-muted ";
 
   return (
     <div className="space-y-4">
@@ -239,7 +239,7 @@ export function Mcp() {
           </span>
           {status && (
             <>
-              <code className="rounded-md bg-inset px-2 py-1 font-mono text-xs text-sub ring-1 ring-edge">
+              <code className="rounded-md bg-inset px-2 py-1 font-mono text-xs text-sub ">
                 {status.endpoint}
               </code>
               <button
@@ -328,7 +328,7 @@ export function Mcp() {
           )}
         </div>
 
-        <div className="mt-4 border-t border-edge pt-4">
+        <div className="mt-4 border-t border-edge/40 pt-4">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs text-muted">访问令牌</span>
             <code className="rounded bg-inset px-2 py-1 font-mono text-xs text-sub">
@@ -362,8 +362,8 @@ export function Mcp() {
       </Card>
 
       {/* ---- 工具清单 ---- */}
-      <Card className="p-0">
-        <div className="flex flex-wrap items-center gap-3 border-b border-edge px-4 py-3">
+      <Card className="overflow-hidden p-0">
+        <div className="flex flex-wrap items-center gap-3 border-b border-edge/40 bg-inset/40 px-4 py-3">
           <h3 className="text-sm font-semibold text-sub">工具清单</h3>
           <span className="text-xs text-faint">{shown.length} / {tools.length} 个</span>
           <input
@@ -373,7 +373,7 @@ export function Mcp() {
             onChange={(e) => setFilter(e.target.value)}
           />
         </div>
-        <div className="divide-y divide-edge">
+        <div className="divide-y divide-edge/40">
           {shown.map((t) => {
             const open = expanded === t.name;
             return (
@@ -388,8 +388,8 @@ export function Mcp() {
                   </button>
                   <Badge className={KIND_STYLE[t.kind]}>{t.kindLabel}</Badge>
                   {t.costly && <Badge className="bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">有外部费用</Badge>}
-                  {t.audit && <Badge className="bg-inset text-muted ring-1 ring-edge">记审计</Badge>}
-                  {!t.enabled && <Badge className="bg-inset text-faint ring-1 ring-edge">已禁用</Badge>}
+                  {t.audit && <Badge className="bg-inset text-muted ">记审计</Badge>}
+                  {!t.enabled && <Badge className="bg-inset text-faint ">已禁用</Badge>}
                   <div className="ml-auto flex items-center gap-2">
                     <Button variant="secondary" onClick={() => openPlayground(t)} disabled={!t.enabled}>
                       <Play size={13} className="mr-1 inline" /> 试一试
@@ -414,7 +414,7 @@ export function Mcp() {
                           </thead>
                           <tbody>
                             {t.params.map((p) => (
-                              <tr key={p.name} className="border-t border-edge align-top">
+                              <tr key={p.name} className="border-t border-edge/40 align-top">
                                 <td className="py-1 pr-4 font-mono text-sub">{p.name}</td>
                                 <td className="py-1 pr-4 text-muted">
                                   {p.type}
@@ -442,7 +442,7 @@ export function Mcp() {
                           {copied === `curl-${t.name}` ? "已复制" : "复制"}
                         </button>
                       </div>
-                      <pre className="overflow-x-auto rounded bg-app p-2 font-mono text-[11px] text-sub ring-1 ring-edge">
+                      <pre className="overflow-x-auto rounded bg-app p-2 font-mono text-[11px] text-sub ">
                         {status ? curlExample(status, t) : ""}
                       </pre>
                     </div>
@@ -469,21 +469,21 @@ export function Mcp() {
         <p className="mb-2 text-xs text-faint">
           Claude Desktop / Cline / Continue 的 MCP 配置片段（HTTP 传输）。令牌未设置时无需 headers。
         </p>
-        <pre className="overflow-x-auto rounded bg-inset p-3 font-mono text-[11px] text-sub ring-1 ring-edge">
+        <pre className="overflow-x-auto rounded bg-inset p-3 font-mono text-[11px] text-sub ">
           {status ? clientConfig(status) : ""}
         </pre>
       </Card>
 
       {/* ---- 调用记录 ---- */}
-      <Card className="p-0">
-        <div className="flex items-center gap-3 border-b border-edge px-4 py-3">
+      <Card className="overflow-hidden p-0">
+        <div className="flex items-center gap-3 border-b border-edge/40 bg-inset/40 px-4 py-3">
           <h3 className="text-sm font-semibold text-sub">调用记录</h3>
           <span className="text-xs text-faint">最近 {calls.length} 条（不记录参数，避免密钥/正文进日志）</span>
           <Button variant="secondary" className="ml-auto" onClick={() => void refresh()}>
             刷新
           </Button>
         </div>
-        <div className="divide-y divide-edge">
+        <div className="divide-y divide-edge/40">
           {calls.map((c) => (
             <div key={c.id} className="flex flex-wrap items-center gap-2 px-4 py-2 text-xs">
               <span className="w-32 shrink-0 text-faint">{c.createdAt.slice(5, 19)}</span>
@@ -542,7 +542,7 @@ export function Mcp() {
                   )}
                   <span className="text-faint">{playResult.durationMs}ms</span>
                 </div>
-                <pre className="max-h-80 overflow-auto rounded bg-inset p-2 font-mono text-[11px] text-sub ring-1 ring-edge">
+                <pre className="max-h-80 overflow-auto rounded bg-inset p-2 font-mono text-[11px] text-sub ">
                   {playResult.ok ? playResult.result : playResult.error}
                 </pre>
               </div>

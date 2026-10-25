@@ -6,7 +6,7 @@ import { PageHeader, Card } from "../components/ui";
 import { Button, Modal } from "../components/Modal";
 
 const inputCls =
-  "w-full rounded-md border border-strong px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
+  "w-full rounded-lg border border-transparent bg-inset px-3 py-1.5 text-sm text-main transition-colors placeholder:text-faint focus:border-transparent focus:bg-card focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
 
 function statusBadge(status: ApiKey["status"]) {
   return status === "active" ? (
@@ -14,7 +14,7 @@ function statusBadge(status: ApiKey["status"]) {
       <span className="h-1.5 w-1.5 rounded-full bg-green-500" /> 启用
     </span>
   ) : (
-    <span className="inline-flex items-center gap-1.5 rounded-md bg-inset px-2 py-0.5 text-xs font-medium text-muted ring-1 ring-edge">
+    <span className="inline-flex items-center gap-1.5 rounded-md bg-inset px-2 py-0.5 text-xs font-medium text-muted ">
       <span className="h-1.5 w-1.5 rounded-full bg-gray-400" /> 停用
     </span>
   );
@@ -303,7 +303,7 @@ export function Keys() {
 
       <Card className="p-0 overflow-x-auto">
         <table className="w-full text-left text-sm">
-          <thead className="border-b border-edge bg-inset text-xs text-muted">
+          <thead className="bg-inset/80 text-xs text-muted">
             <tr>
               <th className="px-3 py-2 font-medium">名称</th>
               <th className="px-3 py-2 font-medium">密钥</th>
@@ -314,7 +314,7 @@ export function Keys() {
               <th className="px-3 py-2 text-right font-medium">操作</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-edge">
+          <tbody className="divide-y divide-edge/40">
             {keys.map((k) => {
               const used = quotaUsed(k);
               return (

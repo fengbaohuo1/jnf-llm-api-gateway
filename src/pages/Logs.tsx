@@ -62,7 +62,7 @@ function protoBadge(protocol: string) {
 }
 
 const inputCls =
-  "w-full rounded-md border border-strong px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
+  "w-full rounded-lg border border-transparent bg-inset px-3 py-1.5 text-sm text-main transition-colors placeholder:text-faint focus:border-transparent focus:bg-card focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
 
 /** JSON 格式化展示：可解析则 pretty，否则原样（截断的长文本/错误体） */
 function tryPretty(raw: string | null): string {
@@ -88,7 +88,7 @@ function BodySection({ title, raw }: { title: string; raw: string | null }) {
     }
   };
   return (
-    <details className="group rounded-lg border border-edge" open>
+    <details className="group rounded-xl bg-inset/40" open>
       <summary className="flex cursor-pointer select-none items-center justify-between rounded-lg bg-inset px-3 py-2 text-sm font-medium text-sub hover:bg-hover">
         <span>{title}</span>
         <span className="flex items-center gap-2">
@@ -97,7 +97,7 @@ function BodySection({ title, raw }: { title: string; raw: string | null }) {
               e.preventDefault();
               copy();
             }}
-            className="inline-flex items-center gap-1 rounded-md border border-strong px-2 py-0.5 text-xs text-faint hover:bg-hover hover:text-sub"
+            className="inline-flex items-center gap-1 rounded-md bg-inset px-2 py-0.5 text-xs text-faint hover:bg-hover hover:text-sub"
           >
             <Copy size={12} /> {copied ? "已复制" : "复制"}
           </button>
@@ -137,7 +137,7 @@ function DetailModal({ log, onClose }: { log: RequestLog; onClose: () => void })
     <Modal open title={`请求详情 · ${log.timestamp.slice(5, 19)}`} onClose={onClose} size="lg">
       <div className="space-y-4">
         {/* 概要信息 */}
-        <div className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-lg border border-edge bg-inset px-3 py-3 text-sm sm:grid-cols-3">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-xl bg-inset/70 px-3 py-3 text-sm sm:grid-cols-3">
           <div>
             <p className="text-xs text-faint">模型 / 协议</p>
             <p className="flex items-center gap-2 font-medium text-sub">
@@ -204,7 +204,7 @@ function DetailModal({ log, onClose }: { log: RequestLog; onClose: () => void })
         {loading && <p className="text-sm text-faint">内容明细加载中…</p>}
         {failed && <p className="text-sm text-faint">明细加载失败</p>}
         {!loading && !failed && !hasDetail && (
-          <p className="rounded-lg border border-edge px-3 py-3 text-sm text-faint">
+          <p className="rounded-xl bg-inset/40 px-3 py-3 text-sm text-faint">
             该请求没有内容明细 —— 可能低于「日志内容存储级别」阈值（无风险请求默认不存内容），
             或设置中关闭了内容记录，也可能是引入内容记录前的旧数据。概要、计费与安全事件不受影响。
           </p>
@@ -329,7 +329,7 @@ export function Logs() {
 
       <Card className="p-0 overflow-x-auto">
         <table className="w-full text-left text-sm">
-          <thead className="border-b border-edge bg-inset text-xs text-muted">
+          <thead className="bg-inset/80 text-xs text-muted">
             <tr>
               <th className="px-3 py-2 font-medium">时间</th>
               <th className="px-3 py-2 font-medium">渠道 / 密钥</th>
@@ -340,7 +340,7 @@ export function Logs() {
               <th className="px-3 py-2 font-medium">成本</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-edge">
+          <tbody className="divide-y divide-edge/40">
             {logs.map((l) => (
               <tr
                 key={l.id}

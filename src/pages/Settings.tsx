@@ -22,7 +22,7 @@ const tabs: { key: TabKey; label: string }[] = [
 ];
 
 const inputCls =
-  "w-full rounded-md border border-strong bg-card px-3 py-1.5 text-sm text-main focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
+  "w-full rounded-lg border border-transparent bg-inset px-3 py-1.5 text-sm text-main transition-colors placeholder:text-faint focus:border-transparent focus:bg-card focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
 
 /** 绑定一个 settings KV 字段，自动读取回填并保存。 */
 function useSetting(key: string, fallback: string) {
@@ -64,7 +64,7 @@ function ServerTab() {
     <Card>
       <h3 className="mb-2 text-sm font-semibold text-sub">监听服务</h3>
       <p className="mb-2 text-xs text-faint">修改监听地址或端口后需重启应用生效</p>
-      <div className="divide-y divide-edge">
+      <div className="divide-y divide-edge/40">
         <Row label="监听地址" desc="网关服务绑定地址（默认仅本机，对外开放请自行评估风险）">
           <input value={host.value ?? ""} onChange={(e) => host.setValue(e.target.value)} className={inputCls} />
         </Row>
@@ -84,11 +84,10 @@ function ProxyTab() {
   const enabled = useSetting("server.enabled", "true");
   const securityEnabled = useSetting("security.enabled", "true");
   const securityMode = useSetting("security.mode", "replace");
-  const deepseekCompat = useSetting("compat.deepseek_reasoning", "true");
   const port = useSetting("server.port", "8787");
   const [saved, setSaved] = useState(false);
   const saveAll = async () => {
-    await Promise.all([enabled.save(), securityEnabled.save(), securityMode.save(), deepseekCompat.save()]);
+    await Promise.all([enabled.save(), securityEnabled.save(), securityMode.save()]);
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
@@ -96,22 +95,16 @@ function ProxyTab() {
   return (
     <Card>
       <h3 className="mb-2 text-sm font-semibold text-sub">转发代理</h3>
-      <div className="divide-y divide-edge">
+      <div className="divide-y divide-edge/40">
         <Row label="启用代理" desc="关闭后代理返回 503，不影响应用其他功能">
           <Toggle checked={enabled.value === "true"} onChange={(v) => enabled.setValue(String(v))} />
         </Row>
         <Row label="服务地址" desc="本地程序接入时配置 Base URL 为以下地址，并使用 sk-llmapi-* 密钥">
           <code className="block rounded-md bg-inset px-3 py-1.5 text-xs text-sub">{endpoint}</code>
         </Row>
-        <Row
-          label="DeepSeek 思考模式兼容"
-          desc="转发到 DeepSeek 协议渠道时，给带 tool_calls 的 assistant 消息补空 reasoning_content；DeepSeek 思考模型要求工具调用轮次回传该字段，否则工具执行后的下一轮会 400。若某个非思考模型不接受该字段，可关闭"
-        >
-          <Toggle checked={deepseekCompat.value === "true"} onChange={(v) => deepseekCompat.setValue(String(v))} />
-        </Row>
       </div>
       <h3 className="mb-2 mt-6 text-sm font-semibold text-sub">安全扫描与脱敏</h3>
-      <div className="divide-y divide-edge">
+      <div className="divide-y divide-edge/40">
         <Row
           label="启用安全扫描"
           desc="扫描请求与响应中的敏感信息（密钥/密码/手机号/证件号）与提示注入特征"
@@ -149,7 +142,7 @@ function GeneralTab() {
   return (
     <Card>
       <h3 className="mb-2 text-sm font-semibold text-sub">日志与保留</h3>
-      <div className="divide-y divide-edge">
+      <div className="divide-y divide-edge/40">
         <Row
           label="日志内容存储级别"
           desc="请求/响应内容按该请求命中的最高安全风险决定是否落库；概要、Token、计费与安全事件始终记录，不受影响"
@@ -253,7 +246,7 @@ function SystemTab() {
     <div className="space-y-4">
       <Card>
         <h3 className="mb-2 text-sm font-semibold text-sub">启动与窗口</h3>
-        <div className="divide-y divide-edge">
+        <div className="divide-y divide-edge/40">
           <Row label="开机自启" desc="登录 Windows 后自动运行（自启时隐藏到托盘，代理照常提供服务）">
             <Toggle checked={autoStart} onChange={toggleAutoStart} disabled={!autoStartLoaded} />
           </Row>
@@ -295,7 +288,7 @@ function UiTab() {
   return (
     <Card>
       <h3 className="mb-2 text-sm font-semibold text-sub">外观</h3>
-      <div className="divide-y divide-edge">
+      <div className="divide-y divide-edge/40">
         <Row label="主题" desc="亮色 / 暗色 / 跟随系统（跟随系统时自动响应系统主题变化）">
           <select
             value={theme.value ?? "system"}
@@ -332,7 +325,7 @@ function FailoverTab() {
   return (
     <Card>
       <h3 className="mb-2 text-sm font-semibold text-sub">多渠道容灾</h3>
-      <div className="divide-y divide-edge">
+      <div className="divide-y divide-edge/40">
         <Row
           label="启用故障转移"
           desc="正常请求固定走主渠道（优先级最高）；主渠道失败时按队列顺序尝试备用渠道。关闭则失败即报错"
@@ -439,7 +432,7 @@ function ServicesTab() {
         初始化失败可点重试恢复，无需重启应用。MCP 服务运行中时，可在 Claude Desktop / Cline 等客户端把下面地址配为
         MCP Server URL。
       </p>
-      <div className="divide-y divide-edge">
+      <div className="divide-y divide-edge/40">
         {services.map((s) => (
           <div key={s.id} className="flex items-center justify-between gap-4 py-3">
             <div className="min-w-0">
@@ -453,7 +446,7 @@ function ServicesTab() {
               <p className="mt-0.5 text-xs text-faint">{s.description}</p>
               {s.id === "mcp" && s.status === "running" && (
                 <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                  <code className="rounded-md bg-inset px-2 py-1 font-mono text-xs text-sub ring-1 ring-edge">
+                  <code className="rounded-md bg-inset px-2 py-1 font-mono text-xs text-sub ">
                     http://127.0.0.1:{mcpPort}/mcp
                   </code>
                   <button
@@ -510,13 +503,13 @@ export function Settings() {
   return (
     <div>
       <PageHeader title="设置" description="配置网关运行参数" />
-      <div className="mb-4 flex flex-wrap gap-1 border-b border-edge">
+      <div className="mb-4 inline-flex flex-wrap gap-1 rounded-xl bg-inset p-1">
         {tabs.map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
-            className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
-              tab === t.key ? "border-indigo-600 text-accent" : "border-transparent text-muted hover:text-sub"
+            className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-colors ${
+              tab === t.key ? "bg-card text-accent shadow-sm" : "text-muted hover:text-sub"
             }`}
           >
             {t.label}

@@ -7,7 +7,7 @@ import type { AuthEvent, AdminAudit, SecurityLog, SecurityRule } from "../types"
 
 const fmt = (n: number) => n.toLocaleString("en-US");
 const inputCls =
-  "w-full rounded-md border border-strong px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
+  "w-full rounded-lg border border-transparent bg-inset px-3 py-1.5 text-sm text-main transition-colors placeholder:text-faint focus:border-transparent focus:bg-card focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
 
 // ---------------- 徽章 ----------------
 
@@ -129,7 +129,7 @@ function EventsTab() {
 
       <Card className="p-0 overflow-x-auto">
         <table className="w-full text-left text-sm">
-          <thead className="border-b border-edge bg-inset text-xs text-muted">
+          <thead className="bg-inset/80 text-xs text-muted">
             <tr>
               <th className="px-3 py-2 font-medium">时间</th>
               <th className="px-3 py-2 font-medium">阶段</th>
@@ -141,7 +141,7 @@ function EventsTab() {
               <th className="px-3 py-2 font-medium">请求ID</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-edge">
+          <tbody className="divide-y divide-edge/40">
             {logs.map((l) => (
               <tr key={l.id} className="hover:bg-hover">
                 <td className="px-3 py-2 whitespace-nowrap text-muted">{l.createdAt.slice(5, 16)}</td>
@@ -445,7 +445,7 @@ function RulesTab() {
 
       <Card className="p-0 overflow-x-auto">
         <table className="w-full text-left text-sm">
-          <thead className="border-b border-edge bg-inset text-xs text-muted">
+          <thead className="bg-inset/80 text-xs text-muted">
             <tr>
               <th className="w-8 px-3 py-2">
                 <input
@@ -466,7 +466,7 @@ function RulesTab() {
               <th className="px-3 py-2 text-right font-medium">操作</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-edge">
+          <tbody className="divide-y divide-edge/40">
             {filtered.map((r) => (
               <tr
                 key={r.id}
@@ -565,11 +565,11 @@ function AuditTab() {
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <Card className="p-0 overflow-x-auto">
-        <h3 className="flex items-center gap-2 border-b border-edge bg-inset px-3 py-2 text-sm font-semibold text-sub">
+        <h3 className="flex items-center gap-2 border-b border-edge/40 bg-inset px-3 py-2 text-sm font-semibold text-sub">
           <CheckCircle2 size={15} /> 鉴权事件（最近 50 条）
         </h3>
         <table className="w-full text-left text-sm">
-          <tbody className="divide-y divide-edge">
+          <tbody className="divide-y divide-edge/40">
             {authEvents.map((e) => (
               <tr key={e.id} className="hover:bg-hover">
                 <td className="px-3 py-1.5 whitespace-nowrap text-muted">{e.createdAt.slice(5, 16)}</td>
@@ -593,11 +593,11 @@ function AuditTab() {
       </Card>
 
       <Card className="p-0 overflow-x-auto">
-        <h3 className="flex items-center gap-2 border-b border-edge bg-inset px-3 py-2 text-sm font-semibold text-sub">
+        <h3 className="flex items-center gap-2 border-b border-edge/40 bg-inset px-3 py-2 text-sm font-semibold text-sub">
           <Shield size={15} /> 管理操作审计（最近 50 条）
         </h3>
         <table className="w-full text-left text-sm">
-          <tbody className="divide-y divide-edge">
+          <tbody className="divide-y divide-edge/40">
             {audits.map((a) => (
               <tr key={a.id} className="hover:bg-hover">
                 <td className="px-3 py-1.5 whitespace-nowrap text-muted">{a.createdAt.slice(5, 16)}</td>
@@ -638,13 +638,13 @@ export function Security() {
         title="安全"
         description="多引擎安全审计：检测（规则/隐写/命令/泄露比对）→ 策略决策 → 审计留痕"
       />
-      <div className="mb-4 flex flex-wrap gap-1 border-b border-edge">
+      <div className="mb-4 inline-flex flex-wrap gap-1 rounded-xl bg-inset p-1">
         {tabs.map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
-            className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
-              tab === t.key ? "border-indigo-600 text-accent" : "border-transparent text-muted hover:text-sub"
+            className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-colors ${
+              tab === t.key ? "bg-card text-accent shadow-sm" : "text-muted hover:text-sub"
             }`}
           >
             {t.label}

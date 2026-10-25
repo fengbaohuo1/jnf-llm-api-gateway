@@ -24,6 +24,8 @@ pub struct ChannelChoice {
     /// 生效协议（显式 protocol；为空时按渠道类型推导）：
     /// openai / deepseek / anthropic / gemini
     pub protocol: String,
+    /// 渠道级 DeepSeek 思考模式兼容：转发时给 tool_calls 轮次补空 reasoning_content
+    pub compat_reasoning_content: bool,
     pub base_url: String,
     pub api_key: String,
     /// 渠道配置的模型（转发时使用请求的 model；本字段保留用于日志/展示）
@@ -47,8 +49,8 @@ pub async fn select_channels(
     pool: &SqlitePool,
     requested_model: &str,
 ) -> Result<Vec<ChannelChoice>, String> {
-    let rows: Vec<(String, String, String, String, String, String, String, i64, i64, f64, f64, f64)> = sqlx::query_as(
-        "SELECT id, name, type, protocol, base_url, api_key_encrypted, model, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens FROM channels
+    let rows: Vec<(String, String, String, String, i64, String, String, String, i64, i64, f64, f64, f64)> = sqlx::query_as(
+        "SELECT id, name, type, protocol, compat_reasoning_content, base_url, api_key_encrypted, model, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens FROM channels
          WHERE status = 'active' AND (model = ?1 OR model = '')
          ORDER BY priority DESC",
     )
@@ -59,10 +61,11 @@ pub async fn select_channels(
 
     let candidates: Vec<ChannelChoice> = rows
         .into_iter()
-        .map(|(id, name, channel_type, protocol, base_url, api_key, model, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens)| ChannelChoice {
+        .map(|(id, name, channel_type, protocol, compat_reasoning_content, base_url, api_key, model, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens)| ChannelChoice {
             id,
             name,
             protocol: crate::adapters::effective_protocol(&channel_type, &protocol),
+            compat_reasoning_content: compat_reasoning_content != 0,
             channel_type,
             base_url,
             api_key,
@@ -145,6 +148,7 @@ mod tests {
         sqlx::query(
             "CREATE TABLE channels (
                 id TEXT PRIMARY KEY, name TEXT, type TEXT, protocol TEXT NOT NULL DEFAULT '',
+                compat_reasoning_content INTEGER NOT NULL DEFAULT 1,
                 base_url TEXT,
                 model TEXT, status TEXT, api_key_encrypted TEXT,
                 latency_ms INTEGER, priority INTEGER, weight INTEGER,
@@ -209,6 +213,15 @@ mod tests {
 
         let queue = select_channels(&pool, "deepseek-chat").await.unwrap();
         assert_eq!(queue[0].protocol, "deepseek");
+        assert!(queue[0].compat_reasoning_content, "默认开启思考兼容");
+
+        // 渠道级开关关闭后队列中读到 false
+        sqlx::query("UPDATE channels SET compat_reasoning_content = 0 WHERE id = 'custom-ds'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let queue = select_channels(&pool, "deepseek-chat").await.unwrap();
+        assert!(!queue[0].compat_reasoning_content);
 
         let queue = select_channels(&pool, "gpt-4o").await.unwrap();
         assert_eq!(queue[0].protocol, "openai");

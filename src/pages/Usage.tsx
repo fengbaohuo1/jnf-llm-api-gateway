@@ -63,13 +63,13 @@ export function Usage() {
         title="用量"
         description="查看请求量与 Token 消耗（精确到个位）"
         actions={
-          <div className="flex rounded-lg border border-edge p-0.5">
+          <div className="flex rounded-lg bg-inset p-1">
             {ranges.map((r) => (
               <button
                 key={r.key}
                 onClick={() => setRange(r.key)}
                 className={`rounded-md px-3 py-1 text-sm font-medium ${
-                  range === r.key ? "bg-indigo-600 text-white" : "text-muted hover:bg-hover"
+                  range === r.key ? "bg-card text-accent shadow-sm" : "text-muted hover:text-sub"
                 }`}
               >
                 {r.key}
@@ -122,7 +122,7 @@ export function Usage() {
             return (
               <div key={i} className="group relative flex h-full min-w-0 flex-1 flex-col items-center">
                 {/* 悬停浮窗：标明当天各类 token 数量 */}
-                <div className="pointer-events-none absolute -top-1 left-1/2 z-10 hidden -translate-x-1/2 -translate-y-full flex-col gap-0.5 whitespace-nowrap rounded-lg border border-edge bg-card px-3 py-2 text-xs shadow-lg group-hover:flex">
+                <div className="pointer-events-none absolute -top-1 left-1/2 z-10 hidden -translate-x-1/2 -translate-y-full flex-col gap-0.5 whitespace-nowrap rounded-xl bg-card px-3 py-2 text-xs shadow-pop group-hover:flex">
                   <p className="mb-0.5 font-semibold text-main">
                     {p.date} · 总计 {fmt(p.tokens)}
                   </p>

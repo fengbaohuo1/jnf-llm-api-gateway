@@ -8,8 +8,8 @@ use super::pool;
 
 #[tauri::command]
 pub async fn list_channels(state: State<'_, DbState>) -> Result<Vec<Channel>, String> {
-    let rows = sqlx::query_as::<_, (String, String, String, String, String, String, String, String, Option<i64>, i64, i64, f64, f64, f64, String)>(
-        "SELECT id, name, type, protocol, base_url, model, status, api_key_encrypted, latency_ms, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens, created_at FROM channels ORDER BY created_at DESC",
+    let rows = sqlx::query_as::<_, (String, String, String, String, i64, String, String, String, String, Option<i64>, i64, i64, f64, f64, f64, String)>(
+        "SELECT id, name, type, protocol, compat_reasoning_content, base_url, model, status, api_key_encrypted, latency_ms, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens, created_at FROM channels ORDER BY created_at DESC",
     )
     .fetch_all(pool(&state))
     .await
@@ -22,17 +22,18 @@ pub async fn list_channels(state: State<'_, DbState>) -> Result<Vec<Channel>, St
             name: r.1,
             type_: r.2,
             protocol: r.3,
-            base_url: r.4,
-            model: r.5,
-            status: r.6,
-            api_key_masked: mask(&r.7),
-            latency_ms: r.8,
-            priority: r.9,
-            weight: r.10,
-            price_per_1k_tokens: r.11,
-            cache_price_per_1k_tokens: r.12,
-            reasoning_price_per_1k_tokens: r.13,
-            created_at: r.14,
+            compat_reasoning_content: r.4 != 0,
+            base_url: r.5,
+            model: r.6,
+            status: r.7,
+            api_key_masked: mask(&r.8),
+            latency_ms: r.9,
+            priority: r.10,
+            weight: r.11,
+            price_per_1k_tokens: r.12,
+            cache_price_per_1k_tokens: r.13,
+            reasoning_price_per_1k_tokens: r.14,
+            created_at: r.15,
         })
         .collect())
 }
@@ -43,6 +44,7 @@ pub async fn create_channel(
     name: String,
     type_: String,
     protocol: String,
+    compat_reasoning_content: bool,
     base_url: String,
     model: String,
     api_key: String,
@@ -56,9 +58,9 @@ pub async fn create_channel(
     let id = new_id("ch");
     let created = now_iso();
     sqlx::query(
-        "INSERT INTO channels (id, name, type, protocol, base_url, model, status, api_key_encrypted, latency_ms, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,NULL,?9,?10,?11,?12,?13,?14,?14)",
+        "INSERT INTO channels (id, name, type, protocol, compat_reasoning_content, base_url, model, status, api_key_encrypted, latency_ms, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,NULL,?10,?11,?12,?13,?14,?15,?15)",
     )
-    .bind(&id).bind(&name).bind(&type_).bind(&protocol).bind(&base_url).bind(&model).bind(&status).bind(&api_key).bind(priority).bind(weight).bind(price_per_1k_tokens).bind(cache_price_per_1k_tokens).bind(reasoning_price_per_1k_tokens).bind(&created)
+    .bind(&id).bind(&name).bind(&type_).bind(&protocol).bind(compat_reasoning_content as i64).bind(&base_url).bind(&model).bind(&status).bind(&api_key).bind(priority).bind(weight).bind(price_per_1k_tokens).bind(cache_price_per_1k_tokens).bind(reasoning_price_per_1k_tokens).bind(&created)
     .execute(pool(&state))
     .await
     .map_err(|e| e.to_string())?;
@@ -69,6 +71,7 @@ pub async fn create_channel(
         name,
         type_,
         protocol,
+        compat_reasoning_content,
         base_url,
         model,
         status,
@@ -90,6 +93,7 @@ pub async fn update_channel(
     name: String,
     type_: String,
     protocol: String,
+    compat_reasoning_content: bool,
     base_url: String,
     model: String,
     status: String,
@@ -102,15 +106,16 @@ pub async fn update_channel(
 ) -> Result<(), String> {
     // 前端编辑时提交完整表单，直接全量更新（api_key 传空字符串表示不改动密钥）。
     sqlx::query(
-        "UPDATE channels SET name = ?2, type = ?3, protocol = ?4, base_url = ?5, model = ?6, status = ?7,
-                api_key_encrypted = CASE WHEN ?8 = '' THEN api_key_encrypted ELSE ?8 END,
-                priority = ?9, weight = ?10, price_per_1k_tokens = ?11, cache_price_per_1k_tokens = ?12, reasoning_price_per_1k_tokens = ?13, updated_at = ?14
+        "UPDATE channels SET name = ?2, type = ?3, protocol = ?4, compat_reasoning_content = ?5, base_url = ?6, model = ?7, status = ?8,
+                api_key_encrypted = CASE WHEN ?9 = '' THEN api_key_encrypted ELSE ?9 END,
+                priority = ?10, weight = ?11, price_per_1k_tokens = ?12, cache_price_per_1k_tokens = ?13, reasoning_price_per_1k_tokens = ?14, updated_at = ?15
          WHERE id = ?1",
     )
     .bind(id.as_str())
     .bind(name.as_str())
     .bind(type_)
     .bind(protocol)
+    .bind(compat_reasoning_content as i64)
     .bind(base_url)
     .bind(model)
     .bind(status)

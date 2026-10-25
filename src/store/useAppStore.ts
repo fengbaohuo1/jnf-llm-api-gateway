@@ -18,6 +18,7 @@ interface AppState {
     name: string;
     type: ChannelType;
     protocol: string;
+    compatReasoningContent: boolean;
     baseUrl: string;
     model: string;
     apiKey: string;
@@ -33,6 +34,7 @@ interface AppState {
     name: string;
     type: ChannelType;
     protocol: string;
+    compatReasoningContent: boolean;
     baseUrl: string;
     model: string;
     status: ChannelStatus;

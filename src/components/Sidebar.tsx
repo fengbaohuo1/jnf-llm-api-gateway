@@ -25,9 +25,9 @@ const navItems = [
 
 export function Sidebar() {
   return (
-    <aside className="flex w-52 flex-shrink-0 flex-col border-r border-edge bg-card">
+    <aside className="flex w-52 flex-shrink-0 flex-col bg-card"> 
       <div className="flex items-center gap-2 px-4 py-4">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 shadow-sm shadow-indigo-600/30">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.7" strokeLinecap="round">
             <path d="M4.5 8 10 10.5M4.5 16 10 13.5M14 10.5 19.5 8M14 13.5 19.5 16" />
             <circle cx="12" cy="12" r="3.2" fill="white" stroke="none" />
@@ -50,7 +50,7 @@ export function Sidebar() {
               className={({ isActive }) =>
                 `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                   isActive
-                    ? "bg-accent-soft text-accent"
+                    ? "bg-accent-soft text-accent shadow-sm"
                     : "text-muted hover:bg-hover hover:text-main"
                 }`
               }
@@ -62,7 +62,7 @@ export function Sidebar() {
         })}
       </nav>
 
-      <div className="border-t border-edge px-4 py-3">
+      <div className="px-4 py-3">
         <p className="text-xs text-faint">v1.0.0</p>
       </div>
     </aside>

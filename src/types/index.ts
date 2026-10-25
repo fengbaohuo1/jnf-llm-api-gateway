@@ -13,6 +13,8 @@ export interface Channel {
   type: ChannelType;
   /** 显式上游协议；"" = 按渠道类型自动推导 */
   protocol: ChannelProtocol | "";
+  /** DeepSeek 思考模式兼容：转发时给 tool_calls 轮次补空 reasoning_content */
+  compatReasoningContent: boolean;
   baseUrl: string;
   model: string;
   status: ChannelStatus;
