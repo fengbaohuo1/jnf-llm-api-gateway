@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Activity, Coins, Radio, Timer } from "lucide-react";
 import { api } from "../api";
 import { Card, PageHeader } from "../components/ui";
+import { lastNDates } from "../lib/dates";
 
 interface Stat {
   requests: number;
@@ -32,8 +33,16 @@ export function Dashboard() {
   const tokens = stat?.tokens ?? 0;
   const avg = stat?.avgLatencyMs ?? 0;
 
-  const maxReq = Math.max(1, ...daily.map((d) => d.requests));
-  const maxTok = Math.max(1, ...daily.map((d) => d.tokens));
+  // 补齐最近 7 天（后端只返回有数据的日期）：缺数据的日期按 0 展示，避免只画出一根满宽柱子
+  const week = useMemo(() => {
+    const byDate = new Map(daily.map((d) => [d.date, d]));
+    return lastNDates(7).map(
+      (date) => byDate.get(date) ?? { date, requests: 0, tokens: 0, avgLatencyMs: 0 },
+    );
+  }, [daily]);
+
+  const maxReq = Math.max(1, ...week.map((d) => d.requests));
+  const maxTok = Math.max(1, ...week.map((d) => d.tokens));
 
   return (
     <div>
@@ -49,11 +58,11 @@ export function Dashboard() {
       <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
           <h3 className="mb-4 text-sm font-semibold text-sub">近 7 天请求趋势</h3>
-          <Chart values={daily.map((d) => d.requests)} max={maxReq} labels={daily.map((d) => d.date.slice(5))} color="bg-indigo-500/80" />
+          <Chart values={week.map((d) => d.requests)} max={maxReq} labels={week.map((d) => d.date.slice(5))} color="bg-indigo-500/80" />
         </Card>
         <Card>
           <h3 className="mb-4 text-sm font-semibold text-sub">近 7 天 Token 消耗</h3>
-          <Chart values={daily.map((d) => d.tokens)} max={maxTok} labels={daily.map((d) => d.date.slice(5))} color="bg-violet-500/80" />
+          <Chart values={week.map((d) => d.tokens)} max={maxTok} labels={week.map((d) => d.date.slice(5))} color="bg-violet-500/80" />
         </Card>
       </div>
     </div>
