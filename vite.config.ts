@@ -27,7 +27,9 @@ export default defineConfig(async () => ({
       : undefined,
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // 4. 忽略编辑器/代理写入的临时目录与临时文件（例如 DSH 的 .xxx.tmpdir）：
+      //    这些文件创建后立即被锁/删除，chokidar 监听会抛 EBUSY 并直接搞崩 dev server
+      ignored: ["**/src-tauri/**", "**/.*.tmpdir/**", "**/*.tmp"],
     },
   },
 }));

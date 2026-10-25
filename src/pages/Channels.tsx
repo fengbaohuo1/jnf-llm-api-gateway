@@ -41,11 +41,7 @@ type FormState = {
   status: ChannelStatus;
   priority: number;
   weight: number;
-  // 以下三个价格以"元/M tokens"输入（文本格式，无步进计数器），提交时换算回每 1k 存储
-  pricePerM: string;
-  cachePricePerM: string;
-  reasoningPricePerM: string;
-  /** 按模型定价（元/M 输入；空字符串 = 未配置，回退默认单价） */
+  /** 按模型定价（元/M 输入）；DeepSeek 每个模型价格不同，渠道不再有统一默认价 */
   modelPrices: Record<string, ModelPriceForm>;
 };
 
@@ -68,9 +64,6 @@ const emptyForm: FormState = {
   status: "active",
   priority: 0,
   weight: 1,
-  pricePerM: "",
-  cachePricePerM: "",
-  reasoningPricePerM: "",
   modelPrices: {},
 };
 
@@ -491,45 +484,14 @@ function ChannelFormModal({
         </Accordion>
         <Accordion title="价格配置（元/M tokens）">
           <div className="space-y-4">
-            <Field label="单价" hint="每百万 token 成本；记账成本 = tokens ÷ 1,000,000 × 单价">
-              <input
-                value={form.pricePerM}
-                onChange={(e) => setForm((f) => ({ ...f, pricePerM: e.target.value }))}
-                className={inputCls}
-                type="text"
-                inputMode="decimal"
-                placeholder="0"
-              />
-            </Field>
-            <Field label="缓存命中单价" hint="留 0 = 不区分缓存，命中部分按正常单价计费">
-              <input
-                value={form.cachePricePerM}
-                onChange={(e) => setForm((f) => ({ ...f, cachePricePerM: e.target.value }))}
-                className={inputCls}
-                type="text"
-                inputMode="decimal"
-                placeholder="0"
-              />
-            </Field>
-            <Field label="输出单价" hint="thinking/reasoning token 专用价（DeepSeek-R1 / OpenAI o 系列）；留 0 = 按正常单价">
-              <input
-                value={form.reasoningPricePerM}
-                onChange={(e) => setForm((f) => ({ ...f, reasoningPricePerM: e.target.value }))}
-                className={inputCls}
-                type="text"
-                inputMode="decimal"
-                placeholder="0"
-              />
-            </Field>
-
-            {/* 按模型定价：每个模型的输入/缓存/输出单价可不同；DeepSeek 支持一键同步官方价 */}
-            {form.models.length > 0 && (
+            {/* DeepSeek 等厂商每个模型价格不同，渠道不再有统一默认价，按模型逐个填写 */}
+            {form.models.length > 0 ? (
               <div className="space-y-2">
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <p className="text-sm font-medium text-sub">按模型定价</p>
                     <p className="text-xs text-faint">
-                      每个模型的单价可不同；留空 = 用上面的默认单价
+                      每个模型的输入 / 缓存命中 / 输出单价可不同；留空 = 该模型不计费
                       {isDeepSeek ? "。计时按官方高峰/空闲时段自动折算" : ""}
                     </p>
                   </div>
@@ -572,6 +534,11 @@ function ChannelFormModal({
                           空闲时段半价
                         </label>
                       </div>
+                      <div className="mb-1 grid grid-cols-3 gap-1.5 text-[10px] text-faint">
+                        <span>输入</span>
+                        <span>缓存命中</span>
+                        <span>输出</span>
+                      </div>
                       <div className="grid grid-cols-3 gap-1.5">
                         <input
                           className={inputCls}
@@ -601,6 +568,11 @@ function ChannelFormModal({
                     </div>
                   );
                 })}
+              </div>
+            ) : (
+              <div className="rounded-lg bg-inset/60 px-3 py-2 text-xs text-faint">
+                该渠道未配置模型，无法按模型计价。请先在上方「模型」中添加模型（DeepSeek 可点「获取模型」拉取），
+                再用「同步官方价」或手动填写各模型单价。
               </div>
             )}
           </div>
@@ -937,10 +909,14 @@ export function Channels() {
       }
       modelPrices[m] = entry;
     }
+    const firstPriced = data.models
+      .map((m) => modelPrices[m])
+      .find((p) => p && (p.input > 0 || p.cacheHit > 0 || p.output > 0));
     const price = {
-      pricePer1kTokens: per1k(parseFloat(data.pricePerM) || 0),
-      cachePricePer1kTokens: per1k(parseFloat(data.cachePricePerM) || 0),
-      reasoningPricePer1kTokens: per1k(parseFloat(data.reasoningPricePerM) || 0),
+      // 渠道默认单价保留给「未配置模型的通配渠道 / 未知模型」兜底：取第一个已定价模型
+      pricePer1kTokens: firstPriced?.input ?? 0,
+      cachePricePer1kTokens: firstPriced?.cacheHit ?? 0,
+      reasoningPricePer1kTokens: firstPriced?.reasoning ?? 0,
       modelPrices,
     };
     try {
@@ -1150,19 +1126,23 @@ export function Channels() {
           status: editing.status,
           priority: editing.priority,
           weight: editing.weight,
-          pricePerM: editing.pricePer1kTokens > 0 ? String(perM(editing.pricePer1kTokens)) : "",
-          cachePricePerM: editing.cachePricePer1kTokens > 0 ? String(perM(editing.cachePricePer1kTokens)) : "",
-          reasoningPricePerM: editing.reasoningPricePer1kTokens > 0 ? String(perM(editing.reasoningPricePer1kTokens)) : "",
+          // 旧渠道没有按模型价格时，用渠道原默认单价预填每个模型，保存后即转为按模型计价
           modelPrices: Object.fromEntries(
-            Object.entries(editing.modelPrices ?? {}).map(([m, p]) => [
-              m,
-              {
-                inputPerM: p.input > 0 ? String(perM(p.input)) : "",
-                cacheHitPerM: p.cacheHit > 0 ? String(perM(p.cacheHit)) : "",
-                outputPerM: p.output > 0 ? String(perM(p.output)) : "",
-                offPeak: !!p.offPeak,
-              },
-            ]),
+            editing.models.map((m) => {
+              const p = editing.modelPrices?.[m];
+              const input = p ? p.input : editing.pricePer1kTokens;
+              const cacheHit = p ? p.cacheHit : editing.cachePricePer1kTokens;
+              const output = p ? p.output : editing.pricePer1kTokens;
+              return [
+                m,
+                {
+                  inputPerM: input > 0 ? String(perM(input)) : "",
+                  cacheHitPerM: cacheHit > 0 ? String(perM(cacheHit)) : "",
+                  outputPerM: output > 0 ? String(perM(output)) : "",
+                  offPeak: !!p?.offPeak,
+                },
+              ];
+            }),
           ),
         } : null}
         onClose={() => setModalOpen(false)}
