@@ -1017,7 +1017,6 @@ export function Channels() {
     <div>
       <PageHeader
         title="渠道"
-        description="管理上游 LLM 服务提供方：卡片按厂商展示，DeepSeek 可直接查看账户余额"
         actions={
           <Button onClick={openAdd}>
             <Plus size={16} className="mr-1 inline" /> 添加渠道
