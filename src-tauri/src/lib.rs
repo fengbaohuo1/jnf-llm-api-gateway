@@ -184,6 +184,7 @@ pub fn run() {
             commands::channels::toggle_channel_status,
             commands::channels::test_channel,
             commands::channels::fetch_channel_models,
+            commands::channels::fetch_channel_balance,
             // keys
             commands::keys::list_keys,
             commands::keys::create_key,

@@ -1,11 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pencil, Plus, Trash2, Cable, Search, ChevronDown, RefreshCw } from "lucide-react";
+import {
+  Cable,
+  ChevronDown,
+  Layers,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+  Wallet,
+  X,
+} from "lucide-react";
 import { channelTypes, providerPresets, protocolOptions, autoProtocol } from "../data/mock";
-import type { Channel, ChannelProtocol, ChannelStatus, ChannelType } from "../types";
+import type {
+  Channel,
+  ChannelBalance,
+  ChannelProtocol,
+  ChannelStatus,
+  ChannelType,
+} from "../types";
 import { useAppStore } from "../store/useAppStore";
 import { PageHeader, Card, Toggle } from "../components/ui";
 import { Button, Modal } from "../components/Modal";
-import { ChannelTypeBadge, StatusBadge } from "../components/Badge";
+import { StatusBadge } from "../components/Badge";
+import { VendorIcon, VENDOR_META, channelProtocol, vendorKeyOf } from "../components/VendorIcon";
 import { api } from "../api";
 
 type FormState = {
@@ -16,7 +34,8 @@ type FormState = {
   /** DeepSeek 思考模式兼容：转发时给 tool_calls 轮次补空 reasoning_content */
   compatReasoningContent: boolean;
   baseUrl: string;
-  model: string;
+  /** 支持的模型列表；空数组 = 匹配任意模型 */
+  models: string[];
   apiKey: string;
   status: ChannelStatus;
   priority: number;
@@ -33,7 +52,7 @@ const emptyForm: FormState = {
   protocol: "",
   compatReasoningContent: true,
   baseUrl: "",
-  model: "",
+  models: [],
   apiKey: "",
   status: "active",
   priority: 0,
@@ -79,6 +98,8 @@ function Accordion({ title, children }: { title: string; children: React.ReactNo
   );
 }
 
+// ---------------- 渠道表单弹窗 ----------------
+
 function ChannelFormModal({
   open,
   initial,
@@ -99,7 +120,8 @@ function ChannelFormModal({
   submitting: boolean;
 }) {
   const [form, setForm] = useState<FormState>(initial ?? emptyForm);
-  const [models, setModels] = useState<string[]>([]);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [modelInput, setModelInput] = useState("");
   const [modelErr, setModelErr] = useState<string | null>(null);
   const [loadingModels, setLoadingModels] = useState(false);
 
@@ -109,7 +131,8 @@ function ChannelFormModal({
     setLastOpen(open);
     if (open) {
       setForm(initial ?? emptyForm);
-      setModels([]);
+      setAvailableModels([]);
+      setModelInput("");
       setModelErr(null);
       setLoadingModels(false);
     }
@@ -125,6 +148,13 @@ function ChannelFormModal({
     [],
   );
 
+  const addModel = (raw: string) => {
+    const m = raw.trim();
+    if (!m) return;
+    setForm((f) => (f.models.includes(m) ? f : { ...f, models: [...f.models, m] }));
+  };
+  const removeModel = (m: string) => setForm((f) => ({ ...f, models: f.models.filter((x) => x !== m) }));
+
   const changeType = (t: ChannelType) => {
     setForm((f) => {
       const baseUrl =
@@ -132,14 +162,14 @@ function ChannelFormModal({
       // 类型变化时协议回到「自动」（避免 Claude/Gemini 类型残留显式协议导致测试失败）
       return { ...f, type: t, protocol: "", baseUrl };
     });
-    setModels([]);
+    setAvailableModels([]);
     setModelErr(null);
   };
 
   const changeProtocol = (p: ChannelProtocol | "") => {
     setForm((f) => ({ ...f, protocol: p }));
     // 协议变化后旧的模型列表可能来自不同端点，清掉避免误导
-    setModels([]);
+    setAvailableModels([]);
     setModelErr(null);
   };
 
@@ -152,7 +182,7 @@ function ChannelFormModal({
         apiKey: form.apiKey.trim() || undefined,
         channelId: channelId || undefined,
       });
-      setModels(r.models);
+      setAvailableModels(r.models);
     } catch (e) {
       setModelErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -183,8 +213,13 @@ function ChannelFormModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, isDeepSeek, channelId, form.apiKey, form.baseUrl]);
 
-  const chip =
-    "rounded-md bg-inset px-2 py-0.5 font-mono text-[11px] text-sub transition-colors hover:bg-accent-soft hover:text-accent";
+  // 可选模型候选：上游返回 + 厂商内置常用（去重）
+  const suggestions = Array.from(new Set([...availableModels, ...preset.models]));
+
+  const pickChip = (picked: boolean) =>
+    `rounded-md px-2 py-0.5 font-mono text-[11px] transition-colors ${
+      picked ? "bg-accent-soft text-accent shadow-sm" : "bg-inset text-sub hover:bg-hover"
+    }`;
 
   return (
     <Modal open={open} title={initial ? "编辑渠道" : "添加渠道"} onClose={onClose}>
@@ -271,22 +306,35 @@ function ChannelFormModal({
             title="请输入合法的 http(s) 地址"
           />
         </Field>
+
         <Field
-          label="默认模型"
-          hint={
-            isDeepSeek
-              ? "留空 = 匹配任意模型；DeepSeek 模型由上游 /models 自动获取，也可手动填写"
-              : "留空 = 匹配任意模型；建议填上游真实模型 ID"
-          }
+          label="模型（可多选）"
+          hint="留空 = 匹配任意模型（通配）；可回车添加、点选建议，或从上游获取模型列表"
         >
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <input
-              list="channel-model-options"
-              value={form.model}
-              onChange={set("model")}
-              className={inputCls}
-              placeholder={preset.models[0] ?? "如 gpt-4o / deepseek-chat"}
+              value={modelInput}
+              onChange={(e) => setModelInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addModel(modelInput);
+                  setModelInput("");
+                }
+              }}
+              className={`${inputCls} min-w-0 flex-1`}
+              placeholder="输入模型 ID，回车添加"
             />
+            <Button
+              variant="secondary"
+              className="shrink-0"
+              onClick={() => {
+                addModel(modelInput);
+                setModelInput("");
+              }}
+            >
+              添加
+            </Button>
             <Button
               variant="secondary"
               className="shrink-0"
@@ -298,47 +346,59 @@ function ChannelFormModal({
               {loadingModels ? "获取中" : "获取模型"}
             </Button>
           </div>
+          {form.models.length > 0 ? (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {form.models.map((m) => (
+                <span
+                  key={m}
+                  className="inline-flex items-center gap-1 rounded-lg bg-accent-soft px-2 py-0.5 font-mono text-[11px] text-accent"
+                >
+                  {m}
+                  <button
+                    type="button"
+                    aria-label={`移除 ${m}`}
+                    onClick={() => removeModel(m)}
+                    className="text-accent/70 transition-colors hover:text-accent"
+                  >
+                    <X size={11} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-1.5 text-[11px] text-faint">当前为通配：任意模型的请求都会命中该渠道</p>
+          )}
         </Field>
-        {isDeepSeek && models.length === 0 && !loadingModels && (
+
+        {suggestions.length > 0 && (
+          <div>
+            <p className="mb-1 text-xs text-faint">可选模型（点击加入 / 再点移除）：</p>
+            <div className="flex max-h-28 flex-wrap gap-1.5 overflow-y-auto">
+              {suggestions.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => (form.models.includes(m) ? removeModel(m) : addModel(m))}
+                  className={pickChip(form.models.includes(m))}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {isDeepSeek && availableModels.length === 0 && !loadingModels && !modelErr && (
           <p className="text-xs text-faint">
             DeepSeek 模型列表通过上游接口获取：{channelId ? "打开编辑时自动加载" : "填写 API Key 后自动加载"}
             ，也可点「获取模型」。
           </p>
         )}
-        <datalist id="channel-model-options">
-          {[...new Set([...models, ...preset.models])].map((m) => (
-            <option key={m} value={m} />
-          ))}
-        </datalist>
         {modelErr && (
           <p className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950 dark:text-red-300">
             模型列表获取失败：{modelErr}（可手动填写模型 ID）
           </p>
         )}
-        {models.length > 0 && (
-          <div>
-            <p className="mb-1 text-xs text-faint">上游返回的模型（点击填入）：</p>
-            <div className="flex max-h-24 flex-wrap gap-1.5 overflow-y-auto">
-              {models.map((m) => (
-                <button key={m} type="button" onClick={() => setForm((f) => ({ ...f, model: m }))} className={chip}>
-                  {m}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        {preset.models.length > 0 && (
-          <div>
-            <p className="mb-1 text-xs text-faint">常用模型（点击填入）：</p>
-            <div className="flex flex-wrap gap-1.5">
-              {preset.models.map((m) => (
-                <button key={m} type="button" onClick={() => setForm((f) => ({ ...f, model: m }))} className={chip}>
-                  {m}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+
         <Accordion title="负载均衡配置（优先级 / 权重）">
           <div className="grid grid-cols-2 gap-4">
             <Field label="优先级" hint="故障转移时越大的越先尝试（主渠道 = 最高优先级）">
@@ -417,14 +477,230 @@ function ChannelFormModal({
   );
 }
 
+// ---------------- 渠道卡片 ----------------
+
+type BalanceState = { loading?: boolean; data?: ChannelBalance; error?: string };
+
+function BalanceBlock({
+  balance,
+  onRefresh,
+}: {
+  balance?: BalanceState;
+  onRefresh: () => void;
+}) {
+  const data = balance?.data;
+  const loading = balance?.loading;
+  return (
+    <div className="mt-3 rounded-xl bg-gradient-to-br from-inset/90 to-inset/40 p-3">
+      <div className="flex items-center justify-between">
+        <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted">
+          <Wallet size={12} /> 账户余额
+        </span>
+        <button
+          type="button"
+          onClick={onRefresh}
+          title="刷新余额"
+          className="rounded-md p-1 text-faint transition-colors hover:bg-card hover:text-accent"
+        >
+          <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
+        </button>
+      </div>
+      {loading && !data && <p className="mt-1.5 text-xs text-faint">查询中…</p>}
+      {balance?.error && (
+        <p className="mt-1 text-xs text-red-500" title={balance.error}>
+          {balance.error}
+          <button type="button" onClick={onRefresh} className="ml-1 underline">
+            重试
+          </button>
+        </p>
+      )}
+      {data?.supported && (
+        <>
+          <div className="mt-1 flex items-baseline gap-1.5">
+            <span className="text-[22px] font-semibold leading-none tracking-tight text-main">
+              ¥{data.totalBalance?.toFixed(2) ?? "0.00"}
+            </span>
+            {data.available === false && (
+              <span className="rounded bg-red-50 px-1 py-0.5 text-[10px] text-red-600 dark:bg-red-950 dark:text-red-300">
+                不可用
+              </span>
+            )}
+          </div>
+          <div className="mt-1.5 flex items-center gap-3 text-[10px] text-faint">
+            <span>充值 ¥{data.toppedUpBalance?.toFixed(2) ?? "0.00"}</span>
+            <span>赠送 ¥{data.grantedBalance?.toFixed(2) ?? "0.00"}</span>
+            {data.fetchedAt && <span className="ml-auto">{data.fetchedAt.slice(11, 19)}</span>}
+          </div>
+        </>
+      )}
+      {data && !data.supported && <p className="mt-1 text-xs text-faint">该厂商暂不支持余额查询</p>}
+    </div>
+  );
+}
+
+function ChannelCard({
+  channel,
+  balance,
+  testMsg,
+  testTitle,
+  onTest,
+  onEdit,
+  onDelete,
+  onToggle,
+  onRefreshBalance,
+}: {
+  channel: Channel;
+  balance?: BalanceState;
+  testMsg?: string;
+  testTitle?: string;
+  onTest: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onToggle: () => void;
+  onRefreshBalance: () => void;
+}) {
+  const protocol = channelProtocol(channel);
+  const vendor = vendorKeyOf(channel.type, channel.protocol);
+  const meta = VENDOR_META[vendor];
+  const isDeepSeek = protocol === "deepseek";
+  const ok = testMsg?.startsWith("✅");
+
+  return (
+    <Card className="group relative overflow-hidden p-0 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-pop">
+      <div
+        className="pointer-events-none absolute inset-x-0 top-0 h-28"
+        style={{ background: `linear-gradient(135deg, ${meta.from}33, transparent 68%)` }}
+      />
+      <div className="relative flex h-full flex-col p-4">
+        <div className="flex items-start gap-3">
+          <VendorIcon type={channel.type} protocol={channel.protocol} size={44} />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5">
+              <h3 className="truncate text-[15px] font-semibold text-main">{channel.name}</h3>
+              {channel.compatReasoningContent && isDeepSeek && (
+                <span
+                  title="DeepSeek 思考模式兼容已开启"
+                  className="shrink-0 rounded bg-accent-soft px-1 py-0.5 text-[10px] font-medium text-accent"
+                >
+                  兼容
+                </span>
+              )}
+            </div>
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <StatusBadge status={channel.status} />
+              <span className="rounded-md bg-inset px-1.5 py-0.5 text-[10px] text-muted">{channel.type}</span>
+              {channel.protocol && (
+                <span
+                  title="显式协议覆盖：连通性测试与知识库问答按此协议调用"
+                  className="rounded-md bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent"
+                >
+                  协议 {channel.protocol}
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-0.5">
+            <IconBtn title="测试连通性" onClick={onTest}>
+              <Cable size={15} />
+            </IconBtn>
+            <IconBtn title="编辑" onClick={onEdit}>
+              <Pencil size={15} />
+            </IconBtn>
+            <IconBtn title="删除" danger onClick={onDelete}>
+              <Trash2 size={15} />
+            </IconBtn>
+          </div>
+        </div>
+
+        {/* 厂商专属区：DeepSeek 显示余额；其他厂商暂不显示 */}
+        {isDeepSeek && <BalanceBlock balance={balance} onRefresh={onRefreshBalance} />}
+
+        <div className="mt-3">
+          <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-faint">
+            模型 {channel.models.length > 1 && `· ${channel.models.length}`}
+          </p>
+          {channel.models.length === 0 ? (
+            <p className="text-xs text-faint">通配任意模型</p>
+          ) : (
+            <div className="flex flex-wrap gap-1">
+              {channel.models.slice(0, 4).map((m) => (
+                <span
+                  key={m}
+                  className="rounded-md bg-inset px-1.5 py-0.5 font-mono text-[10px] text-sub"
+                  title={m}
+                >
+                  {m}
+                </span>
+              ))}
+              {channel.models.length > 4 && (
+                <span className="px-1 py-0.5 text-[10px] text-faint">+{channel.models.length - 4}</span>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+          <div className="min-w-0">
+            <p className="text-[10px] text-faint">Base URL</p>
+            <p className="truncate text-muted" title={channel.baseUrl}>
+              {channel.baseUrl.replace(/^https?:\/\//, "")}
+            </p>
+          </div>
+          <div>
+            <p className="text-[10px] text-faint">单价</p>
+            <p className="text-muted">
+              {channel.pricePer1kTokens > 0 ? (
+                <>
+                  ¥{perM(channel.pricePer1kTokens)}
+                  <span className="text-[10px] text-faint">/M</span>
+                </>
+              ) : (
+                "—"
+              )}
+            </p>
+          </div>
+          <div>
+            <p className="text-[10px] text-faint">优先级 / 权重</p>
+            <p className="text-muted">
+              {channel.priority} <span className="text-faint">/ {channel.weight}</span>
+            </p>
+          </div>
+          <div>
+            <p className="text-[10px] text-faint">延迟</p>
+            <p className="text-muted">{channel.latencyMs ? `${channel.latencyMs} ms` : "—"}</p>
+          </div>
+        </div>
+
+        {testMsg && (
+          <p
+            className={`mt-3 truncate text-xs ${ok ? "text-emerald-500" : "text-red-500"}`}
+            title={testTitle || undefined}
+          >
+            {testMsg}
+          </p>
+        )}
+
+        <div className="mt-auto flex items-center justify-between pt-3">
+          <span className="text-[11px] text-faint">点击开关启停渠道</span>
+          <Toggle checked={channel.status === "active"} onChange={onToggle} />
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+// ---------------- 页面 ----------------
+
 export function Channels() {
   const { channels, loadingChannels, addChannel, updateChannel, removeChannel, toggleChannelStatus, testChannel, refreshChannels } = useAppStore();
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Channel | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Channel | null>(null);
-  // 测试结果摘要（行内展示）+ 完整信息（悬停提示）
+  // 测试结果摘要（卡片内展示）+ 完整信息（悬停提示）
   const [testMsg, setTestMsg] = useState<Record<string, string>>({});
   const [testTitle, setTestTitle] = useState<Record<string, string>>({});
+  // 余额（目前仅 DeepSeek）
+  const [balances, setBalances] = useState<Record<string, BalanceState>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -437,6 +713,28 @@ export function Channels() {
     refreshChannels();
   }, [refreshChannels]);
 
+  const balanceRequested = useRef<Set<string>>(new Set());
+  const loadBalance = async (id: string) => {
+    balanceRequested.current.add(id);
+    setBalances((m) => ({ ...m, [id]: { loading: true } }));
+    try {
+      const data = await api.fetchChannelBalance(id);
+      setBalances((m) => ({ ...m, [id]: { data } }));
+    } catch (e) {
+      setBalances((m) => ({ ...m, [id]: { error: e instanceof Error ? e.message : String(e) } }));
+    }
+  };
+
+  // 渠道列表就绪后自动拉取 DeepSeek 余额（每个渠道一次；失败可点刷新重试）
+  useEffect(() => {
+    for (const c of channels) {
+      if (channelProtocol(c) !== "deepseek") continue;
+      if (balanceRequested.current.has(c.id)) continue;
+      void loadBalance(c.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channels]);
+
   const filtered = useMemo(() => {
     const kw = keyword.trim().toLowerCase();
     return channels.filter((c) => {
@@ -444,7 +742,7 @@ export function Channels() {
         !kw ||
         c.name.toLowerCase().includes(kw) ||
         c.baseUrl.toLowerCase().includes(kw) ||
-        c.model.toLowerCase().includes(kw);
+        c.models.some((m) => m.toLowerCase().includes(kw));
       const matchType = typeFilter === "全部" || c.type === typeFilter;
       const matchStatus = statusFilter === "全部" || c.status === statusFilter;
       return matchKw && matchType && matchStatus;
@@ -479,12 +777,19 @@ export function Channels() {
           protocol: data.protocol,
           compatReasoningContent: data.compatReasoningContent,
           baseUrl: data.baseUrl,
-          model: data.model,
+          models: data.models,
           status: data.status,
           apiKey: data.apiKey,
           priority: data.priority,
           weight: data.weight,
           ...price,
+        });
+        // 编辑后（Key/端点可能变化）重新查询余额
+        balanceRequested.current.delete(editing.id);
+        setBalances((m) => {
+          const next = { ...m };
+          delete next[editing.id];
+          return next;
         });
       } else {
         await addChannel({
@@ -493,7 +798,7 @@ export function Channels() {
           protocol: data.protocol,
           compatReasoningContent: data.compatReasoningContent,
           baseUrl: data.baseUrl,
-          model: data.model,
+          models: data.models,
           apiKey: data.apiKey,
           status: data.status,
           priority: data.priority,
@@ -535,6 +840,12 @@ export function Channels() {
     setError(null);
     try {
       await removeChannel(confirmDelete.id);
+      balanceRequested.current.delete(confirmDelete.id);
+      setBalances((m) => {
+        const next = { ...m };
+        delete next[confirmDelete.id];
+        return next;
+      });
       setConfirmDelete(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -555,7 +866,7 @@ export function Channels() {
     <div>
       <PageHeader
         title="渠道"
-        description="管理上游 LLM 服务提供方"
+        description="管理上游 LLM 服务提供方：卡片按厂商展示，DeepSeek 可直接查看账户余额"
         actions={
           <Button onClick={openAdd}>
             <Plus size={16} className="mr-1 inline" /> 添加渠道
@@ -600,97 +911,54 @@ export function Channels() {
         </p>
       </Card>
 
-      <Card className="p-0 overflow-x-auto">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-inset/80 text-xs text-muted">
-            <tr>
-              <th className="px-3 py-2 font-medium">名称</th>
-              <th className="px-3 py-2 font-medium">类型</th>
-              <th className="px-3 py-2 font-medium">模型</th>
-              <th className="px-3 py-2 font-medium">优先级</th>
-              <th className="px-3 py-2 font-medium">单价</th>
-              <th className="px-3 py-2 font-medium">状态</th>
-              <th className="px-3 py-2 font-medium">延迟</th>
-              <th className="px-3 py-2 text-right font-medium">操作</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-edge/40">
-            {filtered.map((c) => (
-              <tr key={c.id} className="hover:bg-hover">
-                <td className="px-3 py-2">
-                  <p className="font-medium text-main">{c.name}</p>
-                  <p className="max-w-56 truncate text-xs text-faint" title={c.baseUrl}>
-                    {c.baseUrl}
-                  </p>
-                </td>
-                <td className="px-3 py-2">
-                  <ChannelTypeBadge type={c.type} />
-                  <p className="mt-0.5 text-[10px] text-faint" title="实际使用的上游协议">
-                    {c.protocol ? `${c.protocol}（指定）` : `${autoProtocol(c.type)}（自动）`}
-                    {(c.protocol || autoProtocol(c.type)) === "deepseek" && c.compatReasoningContent ? " · 思考兼容" : ""}
-                  </p>
-                </td>
-                <td className="px-3 py-2 text-muted">
-                  {c.model ? c.model : <span className="text-xs text-faint">任意模型</span>}
-                </td>
-                <td className="px-3 py-2 text-muted">
-                  <span className="font-medium text-sub">{c.priority}</span>
-                  <span className="text-xs text-faint"> / {c.weight}</span>
-                </td>
-                <td className="px-3 py-2 text-muted">
-                  {c.pricePer1kTokens > 0 ? (
-                    <span>
-                      ¥{perM(c.pricePer1kTokens)}
-                      <span className="text-xs text-faint">/M</span>
-                      {c.cachePricePer1kTokens > 0 && (
-                        <span className="block text-xs text-emerald-500">缓存 ¥{perM(c.cachePricePer1kTokens)}</span>
-                      )}
-                      {c.reasoningPricePer1kTokens > 0 && (
-                        <span className="block text-xs text-violet-500 dark:text-violet-300">输出 ¥{perM(c.reasoningPricePer1kTokens)}</span>
-                      )}
-                    </span>
-                  ) : (
-                    <span className="text-strong">—</span>
-                  )}
-                </td>
-                <td className="px-3 py-2">
-                  <button onClick={() => handleToggle(c)} title="点击切换状态">
-                    <StatusBadge status={c.status} />
-                  </button>
-                </td>
-                <td className="px-3 py-2 text-muted">
-                  {c.latencyMs ? `${c.latencyMs} ms` : "—"}
-                  {testMsg[c.id] && (
-                    <span className="block max-w-48 truncate text-xs text-accent" title={testTitle[c.id] || undefined}>
-                      {testMsg[c.id]}
-                    </span>
-                  )}
-                </td>
-                <td className="px-3 py-2">
-                  <div className="flex justify-end gap-1">
-                    <IconBtn title="测试" onClick={() => handleTest(c.id)}>
-                      <Cable size={15} />
-                    </IconBtn>
-                    <IconBtn title="编辑" onClick={() => openEdit(c)}>
-                      <Pencil size={15} />
-                    </IconBtn>
-                    <IconBtn title="删除" danger onClick={() => setConfirmDelete(c)}>
-                      <Trash2 size={15} />
-                    </IconBtn>
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {!loadingChannels && filtered.length === 0 && (
-              <tr>
-                <td colSpan={8} className="px-4 py-10 text-center text-sm text-faint">
-                  {channels.length === 0 ? "暂无渠道，点击右上角添加" : "没有符合筛选条件的渠道"}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </Card>
+      {loadingChannels && channels.length === 0 ? (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-64 animate-pulse rounded-2xl bg-card shadow-card" />
+          ))}
+        </div>
+      ) : filtered.length === 0 ? (
+        <Card className="flex flex-col items-center justify-center gap-3 py-14 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent-soft text-accent">
+            <Layers size={22} />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-main">
+              {channels.length === 0 ? "还没有渠道" : "没有符合筛选条件的渠道"}
+            </p>
+            <p className="mt-1 text-xs text-faint">
+              {channels.length === 0
+                ? "添加第一个上游渠道后，可在卡片上测试连通性、查看余额与模型"
+                : "试试调整关键词或筛选条件"}
+            </p>
+          </div>
+          {channels.length === 0 && (
+            <Button onClick={openAdd}>
+              <Plus size={15} className="mr-1 inline" /> 添加渠道
+            </Button>
+          )}
+        </Card>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {filtered.map((c) => (
+            <ChannelCard
+              key={c.id}
+              channel={c}
+              balance={balances[c.id]}
+              testMsg={testMsg[c.id]}
+              testTitle={testTitle[c.id]}
+              onTest={() => handleTest(c.id)}
+              onEdit={() => openEdit(c)}
+              onDelete={() => setConfirmDelete(c)}
+              onToggle={() => handleToggle(c)}
+              onRefreshBalance={() => {
+                balanceRequested.current.delete(c.id);
+                void loadBalance(c.id);
+              }}
+            />
+          ))}
+        </div>
+      )}
 
       <ChannelFormModal
         open={modalOpen}
@@ -702,7 +970,7 @@ export function Channels() {
           protocol: editing.protocol ?? "",
           compatReasoningContent: editing.compatReasoningContent,
           baseUrl: editing.baseUrl,
-          model: editing.model,
+          models: editing.models,
           apiKey: "",
           status: editing.status,
           priority: editing.priority,

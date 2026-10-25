@@ -29,7 +29,7 @@ export function Modal({
             ),
           ).filter((el) => !el.hasAttribute("disabled"))
         : [];
-    (focusables()[0] ?? dialog)?.focus();
+    (dialog ?? focusables()[0])?.focus();
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {

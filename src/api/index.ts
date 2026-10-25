@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   ApiKey,
   Channel,
+  ChannelBalance,
   ChannelStatus,
   ChannelType,
   RequestLog,
@@ -35,6 +36,7 @@ const mapChannel = (c: RawChannel): Channel => ({
   compatReasoningContent: c.compatReasoningContent ?? true,
   baseUrl: c.baseUrl,
   model: c.model,
+  models: c.models ?? (c.model ? [c.model] : []),
   status: c.status as ChannelStatus,
   apiKeyMasked: c.apiKeyMasked,
   latencyMs: c.latencyMs ?? null,
@@ -97,7 +99,7 @@ export const api = {
     protocol: string;
     compatReasoningContent: boolean;
     baseUrl: string;
-    model: string;
+    models: string[];
     apiKey: string;
     status: string;
     priority: number;
@@ -117,7 +119,7 @@ export const api = {
     protocol: string;
     compatReasoningContent: boolean;
     baseUrl: string;
-    model: string;
+    models: string[];
     status: string;
     apiKey: string;
     priority: number;
@@ -141,6 +143,9 @@ export const api = {
   /** 拉取上游模型列表（添加/编辑渠道时选模型用；apiKey/channelId 按需提供） */
   fetchChannelModels: (input: { baseUrl?: string; apiKey?: string; channelId?: string }) =>
     invoke<{ models: string[]; url: string }>("fetch_channel_models", { ...input }),
+
+  /** 查询渠道余额（目前仅 DeepSeek；其他厂商返回 supported=false） */
+  fetchChannelBalance: (id: string) => invoke<ChannelBalance>("fetch_channel_balance", { id }),
 
   // ---- Keys ----
   listKeys: async (): Promise<ApiKey[]> =>
@@ -327,6 +332,7 @@ interface RawChannel {
   compatReasoningContent: boolean;
   baseUrl: string;
   model: string;
+  models: string[];
   status: string;
   apiKeyMasked: string;
   latencyMs: number | null;

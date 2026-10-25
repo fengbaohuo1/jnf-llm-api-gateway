@@ -20,7 +20,7 @@ interface AppState {
     protocol: string;
     compatReasoningContent: boolean;
     baseUrl: string;
-    model: string;
+    models: string[];
     apiKey: string;
     status: ChannelStatus;
     priority: number;
@@ -36,7 +36,7 @@ interface AppState {
     protocol: string;
     compatReasoningContent: boolean;
     baseUrl: string;
-    model: string;
+    models: string[];
     status: ChannelStatus;
     apiKey: string;
     priority: number;

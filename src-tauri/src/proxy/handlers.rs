@@ -921,14 +921,24 @@ pub(crate) async fn handle_models(State(state): State<ProxyState>, headers: Head
         };
     }
 
-    let rows: Vec<String> = sqlx::query_scalar(
-        "SELECT DISTINCT model FROM channels WHERE status = 'active' AND model != '' ORDER BY model",
+    // 聚合所有启用渠道的模型列表（支持多渠道多模型）：models JSON 优先、旧单模型字段回退
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT model, models FROM channels WHERE status = 'active'",
     )
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
+    let mut models: Vec<String> = Vec::new();
+    for (model, models_json) in rows {
+        for m in crate::models::channel_models(&models_json, &model) {
+            if !models.contains(&m) {
+                models.push(m);
+            }
+        }
+    }
+    models.sort();
 
-    let data: Vec<Value> = rows
+    let data: Vec<Value> = models
         .into_iter()
         .map(|m| {
             serde_json::json!({

@@ -126,14 +126,14 @@ pub async fn bind_answer(
     if data::read_base(pool, kb_id).await?.is_none() {
         return Err("知识库不存在".to_string());
     }
-    let row = sqlx::query_as::<_, (String, String, String, String)>(
-        "SELECT type, protocol, model, status FROM channels WHERE id = ?1",
+    let row = sqlx::query_as::<_, (String, String, String, String, String)>(
+        "SELECT type, protocol, model, models, status FROM channels WHERE id = ?1",
     )
     .bind(channel_id)
     .fetch_optional(pool)
     .await
     .map_err(|e| e.to_string())?;
-    let Some((ctype, cprotocol, channel_model, status)) = row else {
+    let Some((ctype, cprotocol, channel_model, channel_models, status)) = row else {
         return Err(format!("问答渠道不存在：{channel_id}"));
     };
     if status != "active" {
@@ -143,16 +143,22 @@ pub async fn bind_answer(
     let protocol = crate::adapters::effective_protocol(&ctype, &cprotocol);
     create_adapter(&protocol, "http://placeholder.invalid", "k")
         .map_err(|e| format!("问答渠道协议暂不支持问答（{ctype}）: {e}"))?;
+    let models = crate::models::channel_models(&channel_models, &channel_model);
     let model = match model.map(str::trim).filter(|m| !m.is_empty()) {
         Some(m) => m.to_string(),
         None => {
-            let m = channel_model.trim();
-            if m.is_empty() {
+            if models.is_empty() {
                 return Err(format!(
                     "渠道 {channel_id} 未配置默认模型，请显式指定问答模型"
                 ));
             }
-            m.to_string()
+            if models.len() > 1 {
+                return Err(format!(
+                    "渠道 {channel_id} 配置了多个模型（{}），请显式指定问答模型",
+                    models.join(" / ")
+                ));
+            }
+            models[0].clone()
         }
     };
     let now = now_iso();
@@ -622,7 +628,7 @@ mod tests {
         // 最小渠道表（绑定校验 + ChannelEmbedder/适配器运行时读取）
         sqlx::query(
             "CREATE TABLE channels (id TEXT PRIMARY KEY, name TEXT, type TEXT, protocol TEXT NOT NULL DEFAULT '', base_url TEXT, \
-             model TEXT, status TEXT, api_key_encrypted TEXT)",
+             model TEXT, models TEXT NOT NULL DEFAULT '', status TEXT, api_key_encrypted TEXT)",
         )
         .execute(&pool)
         .await

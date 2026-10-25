@@ -432,7 +432,7 @@ mod tests {
         // 最小渠道表（bind 校验需要）
         sqlx::query(
             "CREATE TABLE channels (id TEXT PRIMARY KEY, name TEXT, type TEXT, protocol TEXT NOT NULL DEFAULT '', base_url TEXT, \
-             model TEXT, status TEXT, api_key_encrypted TEXT)",
+             model TEXT, models TEXT NOT NULL DEFAULT '', status TEXT, api_key_encrypted TEXT)",
         )
         .execute(&pool)
         .await

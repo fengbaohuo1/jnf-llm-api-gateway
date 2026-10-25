@@ -42,26 +42,27 @@ pub struct ChannelChoice {
 }
 
 /// 构建有序故障转移队列：
-/// 1. 过滤：status = active 且（model 精确匹配 或 渠道 model 为空 = 支持任意模型）
+/// 1. 过滤：status = active 且（模型列表为空 = 任意模型，或请求 model 在渠道模型列表中）；
+///    渠道模型列表优先读 `channels.models`（JSON 数组），为空回退旧单模型字段
 /// 2. 按 priority 降序排序（严格优先级：高优先级组整体在前）
 /// 3. 同优先级组内按 weight 做无放回权重随机（轮盘赌）
 pub async fn select_channels(
     pool: &SqlitePool,
     requested_model: &str,
 ) -> Result<Vec<ChannelChoice>, String> {
-    let rows: Vec<(String, String, String, String, i64, String, String, String, i64, i64, f64, f64, f64)> = sqlx::query_as(
-        "SELECT id, name, type, protocol, compat_reasoning_content, base_url, api_key_encrypted, model, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens FROM channels
-         WHERE status = 'active' AND (model = ?1 OR model = '')
+    let rows: Vec<(String, String, String, String, i64, String, String, String, String, i64, i64, f64, f64, f64)> = sqlx::query_as(
+        "SELECT id, name, type, protocol, compat_reasoning_content, base_url, api_key_encrypted, model, models, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens FROM channels
+         WHERE status = 'active'
          ORDER BY priority DESC",
     )
-    .bind(requested_model)
     .fetch_all(pool)
     .await
     .map_err(|e| e.to_string())?;
 
     let candidates: Vec<ChannelChoice> = rows
         .into_iter()
-        .map(|(id, name, channel_type, protocol, compat_reasoning_content, base_url, api_key, model, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens)| ChannelChoice {
+        .filter(|r| crate::models::channel_serves_model(&r.8, &r.7, requested_model))
+        .map(|(id, name, channel_type, protocol, compat_reasoning_content, base_url, api_key, model, _models, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens)| ChannelChoice {
             id,
             name,
             protocol: crate::adapters::effective_protocol(&channel_type, &protocol),
@@ -150,7 +151,7 @@ mod tests {
                 id TEXT PRIMARY KEY, name TEXT, type TEXT, protocol TEXT NOT NULL DEFAULT '',
                 compat_reasoning_content INTEGER NOT NULL DEFAULT 1,
                 base_url TEXT,
-                model TEXT, status TEXT, api_key_encrypted TEXT,
+                model TEXT, models TEXT NOT NULL DEFAULT '', status TEXT, api_key_encrypted TEXT,
                 latency_ms INTEGER, priority INTEGER, weight INTEGER,
                 price_per_1k_tokens REAL DEFAULT 0,
                 cache_price_per_1k_tokens REAL DEFAULT 0,
@@ -225,6 +226,22 @@ mod tests {
 
         let queue = select_channels(&pool, "gpt-4o").await.unwrap();
         assert_eq!(queue[0].protocol, "openai");
+    }
+
+    #[tokio::test]
+    async fn multi_model_channel_matches_each_listed_model() {
+        let pool = test_pool().await;
+        sqlx::query(
+            "INSERT INTO channels (id, name, type, protocol, base_url, model, models, status, api_key_encrypted, priority, weight, created_at, updated_at)
+             VALUES ('multi', 'multi', 'DeepSeek', '', 'http://x', 'deepseek-chat', '[\"deepseek-chat\",\"deepseek-reasoner\"]', 'active', 'k', 0, 1, '2025-01-01 00:00:00', '2025-01-01 00:00:00')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(select_channels(&pool, "deepseek-chat").await.unwrap().len(), 1);
+        assert_eq!(select_channels(&pool, "deepseek-reasoner").await.unwrap().len(), 1);
+        assert!(select_channels(&pool, "gpt-4o").await.unwrap().is_empty());
     }
 
     #[tokio::test]

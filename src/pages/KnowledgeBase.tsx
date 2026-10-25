@@ -502,7 +502,7 @@ function BindModal({
               value={embModel}
               onChange={(e) => setEmbModel(e.target.value)}
               className={`${inputCls} min-w-0 flex-1`}
-              placeholder={embChannelObj?.model ? `模型（默认 ${embChannelObj.model}）` : "模型，如 text-embedding-3-small"}
+              placeholder={embChannelObj?.models?.length ? `模型（默认 ${embChannelObj.models[0]}）` : "模型，如 text-embedding-3-small"}
             />
             {base?.embeddingChannelId ? (
               <Button variant="secondary" disabled={busyKey !== null} onClick={() => void runUnbind("embedding")}>
@@ -552,7 +552,7 @@ function BindModal({
               value={ansModel}
               onChange={(e) => setAnsModel(e.target.value)}
               className={`${inputCls} min-w-0 flex-1`}
-              placeholder={ansChannelObj?.model ? `问答模型（默认 ${ansChannelObj.model}）` : "问答模型（可选）"}
+              placeholder={ansChannelObj?.models?.length === 1 ? `问答模型（默认 ${ansChannelObj.models[0]}）` : ansChannelObj?.models?.length ? "渠道有多个模型，请填写问答模型" : "问答模型（可选）"}
             />
             {base?.answerChannelId ? (
               <Button variant="secondary" disabled={busyKey !== null} onClick={() => void runUnbind("answer")}>

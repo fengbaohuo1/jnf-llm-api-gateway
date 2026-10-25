@@ -16,7 +16,10 @@ export interface Channel {
   /** DeepSeek 思考模式兼容：转发时给 tool_calls 轮次补空 reasoning_content */
   compatReasoningContent: boolean;
   baseUrl: string;
+  /** 主模型（models 第一个；空串 = 通配任意模型） */
   model: string;
+  /** 渠道支持的模型列表；空数组 = 匹配任意模型 */
+  models: string[];
   status: ChannelStatus;
   apiKeyMasked: string;
   latencyMs: number | null;
@@ -27,6 +30,17 @@ export interface Channel {
   cachePricePer1kTokens: number; // 每 1k token 缓存命中成本（元），0 = 不区分缓存
   reasoningPricePer1kTokens: number; // 每 1k token 输出（thinking/reasoning）专用成本（元），0 = 不区分；界面以"输出单价"展示
   createdAt: string;
+}
+
+/** 渠道余额（目前仅 DeepSeek 支持；supported=false 表示该厂商暂不支持） */
+export interface ChannelBalance {
+  supported: boolean;
+  available?: boolean;
+  currency?: string;
+  totalBalance?: number;
+  grantedBalance?: number;
+  toppedUpBalance?: number;
+  fetchedAt?: string;
 }
 
 export interface ApiKey {

@@ -142,3 +142,11 @@ select,
 textarea {
   color: var(--color-main);
 }
+
+/* 键盘聚焦：按钮/链接统一使用强调色描边（表单控件保留自身的 focus ring） */
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}

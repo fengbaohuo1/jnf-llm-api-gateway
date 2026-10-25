@@ -52,12 +52,14 @@ LLM API Gateway 把这些收进一个桌面应用：客户端只指向**一个�
 
 ### 渠道与调度
 
-- **模型匹配 + 优先级 + 权重**：按请求的 `model` 过滤渠道，`priority` 降序，同一优先级内按 `weight` 无放回轮盘赌；渠道模型留空表示通配。
+- **模型匹配 + 优先级 + 权重**：请求的 `model` 命中渠道模型列表中的任意一项即可路由（列表留空 = 通配任意模型），`priority` 降序，同一优先级内按 `weight` 无放回轮盘赌。
 - **故障转移（默认关闭）**：遇到 5xx / 429 / 超时 / 网络错误时按顺序切换到下一个渠道，最多 `failover.max_attempts` 次；4xx 直接返回客户端，不重试。
 - **没有故障就不做负载均衡**：正常请求固定走主渠道，只有失败才转移——这是刻意的设计选择，避免把「多通道」变成「随机抖动」。
-- 渠道级配置：Base URL、API Key、模型、状态、优先级、权重，以及输入 / 输出 / 缓存命中 / 思考输出四项单价（界面按「元 / 百万 tokens」录入，内部按每 1k 存储，成本统一显示 `¥`）。
-- **模型配置更省事**：按渠道类型预填常见 Base URL；点「获取模型」从上游 `GET /models` 拉取真实模型列表后点选（编辑已有渠道时复用已保存的 Key），DeepSeek 渠道打开编辑会自动通过接口加载模型，也可手填模型 ID；模型留空表示匹配任意模型。
-- **渠道协议可选**：类型（OpenAI / DeepSeek / Custom…）决定品牌与默认值，协议（自动 / OpenAI 兼容 / DeepSeek / Anthropic / Gemini）决定实际适配器；自定义渠道可显式选协议，接入任意 OpenAI 兼容端点，或声明 DeepSeek 协议以启用思考模式兼容。
+- 渠道级配置：Base URL、API Key、模型列表（可多选）、状态、优先级、权重，以及输入 / 输出 / 缓存命中 / 思考输出四项单价（界面按「元 / 百万 tokens」录入，内部按每 1k 存储，成本统一显示 `¥`）。
+- **模型配置更省事**：按渠道类型预填常见 Base URL；点「获取模型」从上游 `GET /models` 拉取真实模型列表后点选（编辑已有渠道时复用已保存的 Key），DeepSeek 渠道打开编辑会自动通过接口加载模型，也可手填模型 ID；**一个渠道可配置多个模型**，`GET /v1/models` 汇总所有活跃渠道的模型去重返回。
+- **卡片化渠道管理**：渠道以卡片展示厂商图标、状态、类型、模型、显式协议、优先级 / 权重、延迟与单价，支持就地测试、编辑、删除与启停。
+- **DeepSeek 余额**：DeepSeek 协议渠道可直接查看账户余额（可用 / 充值 / 赠送 / 更新时间，可手动刷新）。OpenAI、Claude、Gemini 等厂商的额度体系（五小时额度、周额度等）不同，暂不做适配，也不展示余额。
+- **渠道协议可选**：类型（OpenAI / DeepSeek / Claude / Gemini / Custom）决定品牌与默认值，协议（自动 / OpenAI 兼容 / DeepSeek / Anthropic / Gemini）决定实际适配器；自定义渠道可显式选协议，接入任意 OpenAI 兼容端点，或声明 DeepSeek 协议以启用思考模式兼容。
 - **DeepSeek 思考模式兼容（渠道级开关，默认开启）**：DeepSeek 思考模型要求工具调用轮次的 assistant 消息回传 `reasoning_content`，而按 OpenAI 协议实现的客户端通常不回传。网关转发到 DeepSeek 协议渠道时自动补空占位（已有值不覆盖）；开关在渠道编辑弹窗内（仅 DeepSeek 协议渠道显示），可按渠道单独关闭。
 
 ### 上游渠道支持
@@ -303,7 +305,7 @@ curl http://127.0.0.1:8787/v1/responses \
 | `kb.retrieval.perDocCap` | `2` | 每篇文档最多保留块数 |
 | `kb.retrieval.neighborExpand` | `true` | 命中块邻居扩展 |
 
-渠道级配置存在 `channels` 表（不写 `settings.json`）：`protocol`（协议，空 = 按类型自动推导）、`compat_reasoning_content`（DeepSeek 思考模式兼容，默认开）、`priority` / `weight` 与四项单价；界面均在「渠道」编辑弹窗内。
+渠道级配置存在 `channels` 表（不写 `settings.json`）：`protocol`（协议，空 = 按类型自动推导）、`compat_reasoning_content`（DeepSeek 思考模式兼容，默认开）、`models`（模型列表 JSON 数组，空 = 通配，匹配语义见 `models::channel_serves_model`）、`priority` / `weight` 与四项单价；界面均在「渠道」编辑弹窗内。
 
 > 默认只监听 `127.0.0.1`，且 MCP 令牌为空时不做 Bearer 校验。如需让其他机器访问，请同时改 `host` 并设置令牌——这相当于把上游 Key 的代理能力开放出去。
 
@@ -370,7 +372,7 @@ curl http://127.0.0.1:8787/v1/responses \
 # 前端类型检查（strict + noUnusedLocals）
 npx tsc --noEmit
 
-# 后端类型检查与单元测试（181 个）
+# 后端类型检查与单元测试（189 个）
 cd src-tauri
 cargo check
 cargo test
@@ -428,7 +430,7 @@ cargo test
 这是 DeepSeek 思考模型的要求：工具调用后的 assistant 消息必须回传 `reasoning_content`，而按 OpenAI 协议实现的客户端（Codex、自研 Agent 等）通常只回传 `tool_calls`。确认该 DeepSeek 渠道在编辑弹窗中开启「DeepSeek 思考模式兼容」（默认开启），网关会补空占位；客户端自己回传了真实 reasoning 内容时不会被覆盖。该兼容只在渠道协议为 `deepseek` 时生效。
 
 **渠道连通性测试报 HTTP 400，但代理请求正常？**
-测试会使用渠道配置的「默认模型」发一个最小请求（旧版本曾用厂商默认模型，导致 DeepSeek 等渠道误报 400）；请把模型填成上游真实模型 ID，或点「获取模型」从 `/models` 选择。
+测试会使用渠道配置的第一个模型发一个最小请求（旧版本曾用厂商默认模型，导致 DeepSeek 等渠道误报 400）；请把模型填成上游真实模型 ID，或点「获取模型」从 `/models` 选择。若仍 400，请检查渠道协议是否与端点匹配（例如 DeepSeek 端点应选 DeepSeek 协议）。
 
 ## 已知限制
 

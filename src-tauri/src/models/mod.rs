@@ -1,6 +1,94 @@
 use serde::Serialize;
 use sqlx::FromRow;
 
+/// 解析 `channels.models`（JSON 字符串数组）：非法 JSON / 空串返回空数组。
+/// 数组内空白项会被丢弃（保留顺序与重复项由调用方决定）。
+pub fn parse_models_json(raw: &str) -> Vec<String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Vec::new();
+    }
+    serde_json::from_str::<Vec<String>>(raw)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|m| m.trim().to_string())
+        .filter(|m| !m.is_empty())
+        .collect()
+}
+
+/// 渠道生效模型列表：`models` 优先，为空时回退旧的单模型字段 `model`。
+/// 返回空数组表示「匹配任意模型」。
+pub fn channel_models(models_json: &str, legacy_model: &str) -> Vec<String> {
+    let list = parse_models_json(models_json);
+    if !list.is_empty() {
+        return list;
+    }
+    let legacy = legacy_model.trim();
+    if legacy.is_empty() {
+        Vec::new()
+    } else {
+        vec![legacy.to_string()]
+    }
+}
+
+/// 请求模型能否由该渠道服务：模型列表为空 = 通配任意模型；否则必须命中列表。
+pub fn channel_serves_model(models_json: &str, legacy_model: &str, requested: &str) -> bool {
+    let list = channel_models(models_json, legacy_model);
+    list.is_empty() || list.iter().any(|m| m == requested)
+}
+
+/// 规范化前端提交的模型列表：去空白、去重（保留首次出现顺序）。
+pub fn normalize_models(models: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(models.len());
+    for m in models {
+        let m = m.trim();
+        if m.is_empty() || out.iter().any(|x| x == m) {
+            continue;
+        }
+        out.push(m.to_string());
+    }
+    out
+}
+
+#[cfg(test)]
+mod model_list_tests {
+    use super::*;
+
+    #[test]
+    fn parse_models_json_handles_invalid_and_empty() {
+        assert!(parse_models_json("").is_empty());
+        assert!(parse_models_json("not json").is_empty());
+        assert!(parse_models_json("[]").is_empty());
+        assert_eq!(
+            parse_models_json("[\"a\", \" b \", \"\"]"),
+            vec!["a".to_string(), "b".to_string()]
+        );
+    }
+
+    #[test]
+    fn channel_models_prefers_models_then_legacy() {
+        assert_eq!(channel_models("[\"a\",\"b\"]", "legacy"), vec!["a", "b"]);
+        assert_eq!(channel_models("", "legacy"), vec!["legacy"]);
+        assert!(channel_models("", "").is_empty());
+    }
+
+    #[test]
+    fn serves_model_wildcard_and_membership() {
+        assert!(channel_serves_model("", "", "any-model"));
+        assert!(channel_serves_model("[\"a\",\"b\"]", "", "b"));
+        assert!(!channel_serves_model("[\"a\"]", "", "b"));
+        assert!(channel_serves_model("", "legacy", "legacy"));
+    }
+
+    #[test]
+    fn normalize_models_trims_and_dedupes() {
+        assert_eq!(
+            normalize_models(&[" a ".into(), "a".into(), "".into(), "b".into()]),
+            vec!["a", "b"]
+        );
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Channel {
@@ -13,7 +101,10 @@ pub struct Channel {
     /// DeepSeek 思考模式兼容：转发时给带 tool_calls 的 assistant 消息补空 reasoning_content
     pub compat_reasoning_content: bool,
     pub base_url: String,
+    /// 主模型（models 数组第一个；空串 = 匹配任意模型），用于展示与知识库默认模型
     pub model: String,
+    /// 渠道支持的模型列表（JSON 数组解析后）；空数组 = 匹配任意模型
+    pub models: Vec<String>,
     pub status: String,
     pub api_key_masked: String,
     pub latency_ms: Option<i64>,
