@@ -39,6 +39,8 @@ pub struct ChannelChoice {
     pub cache_price_per_1k_tokens: f64,
     /// 每 1k token 思考（reasoning）单价（元），0 = 未配置（按正常输出单价计费）
     pub reasoning_price_per_1k_tokens: f64,
+    /// 按模型定价（模型名 → 价格）；空表 = 用渠道默认单价
+    pub model_prices: std::collections::BTreeMap<String, crate::models::ModelPrice>,
 }
 
 /// 构建有序故障转移队列：
@@ -50,8 +52,8 @@ pub async fn select_channels(
     pool: &SqlitePool,
     requested_model: &str,
 ) -> Result<Vec<ChannelChoice>, String> {
-    let rows: Vec<(String, String, String, String, i64, String, String, String, String, i64, i64, f64, f64, f64)> = sqlx::query_as(
-        "SELECT id, name, type, protocol, compat_reasoning_content, base_url, api_key_encrypted, model, models, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens FROM channels
+    let rows: Vec<(String, String, String, String, i64, String, String, String, String, i64, i64, f64, f64, f64, String)> = sqlx::query_as(
+        "SELECT id, name, type, protocol, compat_reasoning_content, base_url, api_key_encrypted, model, models, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens, model_prices FROM channels
          WHERE status = 'active'
          ORDER BY priority DESC",
     )
@@ -62,7 +64,7 @@ pub async fn select_channels(
     let candidates: Vec<ChannelChoice> = rows
         .into_iter()
         .filter(|r| crate::models::channel_serves_model(&r.8, &r.7, requested_model))
-        .map(|(id, name, channel_type, protocol, compat_reasoning_content, base_url, api_key, model, _models, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens)| ChannelChoice {
+        .map(|(id, name, channel_type, protocol, compat_reasoning_content, base_url, api_key, model, _models, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens, model_prices)| ChannelChoice {
             id,
             name,
             protocol: crate::adapters::effective_protocol(&channel_type, &protocol),
@@ -76,6 +78,7 @@ pub async fn select_channels(
             price_per_1k_tokens,
             cache_price_per_1k_tokens,
             reasoning_price_per_1k_tokens,
+            model_prices: crate::models::parse_model_prices(&model_prices),
         })
         .collect();
 
@@ -156,6 +159,7 @@ mod tests {
                 price_per_1k_tokens REAL DEFAULT 0,
                 cache_price_per_1k_tokens REAL DEFAULT 0,
                 reasoning_price_per_1k_tokens REAL DEFAULT 0,
+                model_prices TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT, updated_at TEXT)",
         )
         .execute(&pool)

@@ -204,6 +204,7 @@ pub(crate) mod test_util {
             price_per_1k_tokens: 0.0,
             cache_price_per_1k_tokens: 0.0,
             reasoning_price_per_1k_tokens: 0.0,
+            model_prices: std::collections::BTreeMap::new(),
         }
     }
 }

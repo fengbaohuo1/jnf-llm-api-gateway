@@ -162,14 +162,21 @@ pub(crate) fn extract_usage(usage: Option<&Value>) -> UsageTokens {
 /// - 输入：未命中部分 × 正常单价，命中部分 × 缓存单价
 /// - 输出：思考部分 × 思考单价，其余 × 正常单价
 /// 缓存单价 / 思考单价 ≤ 0 视为未配置，回落到正常单价（与旧行为一致）。
-pub(crate) fn compute_cost(tokens: UsageTokens, price: f64, cache_price: f64, reasoning_price: f64) -> f64 {
-    let cache_price = if cache_price > 0.0 { cache_price } else { price };
-    let reasoning_price = if reasoning_price > 0.0 { reasoning_price } else { price };
+pub(crate) fn compute_cost(
+    tokens: UsageTokens,
+    input_price: f64,
+    cache_price: f64,
+    output_price: f64,
+    reasoning_price: f64,
+) -> f64 {
+    let cache_price = if cache_price > 0.0 { cache_price } else { input_price };
+    let output_price = if output_price > 0.0 { output_price } else { input_price };
+    let reasoning_price = if reasoning_price > 0.0 { reasoning_price } else { output_price };
     let miss = (tokens.prompt - tokens.cache_hit).max(0);
     let normal_out = (tokens.completion - tokens.reasoning).max(0);
-    (miss as f64 * price
+    (miss as f64 * input_price
         + tokens.cache_hit as f64 * cache_price
-        + normal_out as f64 * price
+        + normal_out as f64 * output_price
         + tokens.reasoning as f64 * reasoning_price)
         / 1000.0
 }
@@ -280,25 +287,25 @@ mod tests {
     fn compute_cost_splits_cache_pricing() {
         // 无缓存/思考单价配置：全部按正常单价（与旧行为一致）
         let tokens = UsageTokens { prompt: 1000, completion: 500, cache_hit: 600, reasoning: 0 };
-        assert_eq!(compute_cost(tokens, 2.0, 0.0, 0.0), 3.0); // (1000+500)/1000×2
+        assert_eq!(compute_cost(tokens, 2.0, 0.0, 2.0, 0.0), 3.0); // (1000+500)/1000×2
         // 有缓存单价：命中部分用缓存价
         // miss=400×2 + hit=600×0.2 + completion=500×2 = 800+120+1000 = 1920 → 1.92
-        assert!((compute_cost(tokens, 2.0, 0.2, 0.0) - 1.92).abs() < 1e-9);
+        assert!((compute_cost(tokens, 2.0, 0.2, 2.0, 0.0) - 1.92).abs() < 1e-9);
     }
 
     #[test]
     fn compute_cost_splits_reasoning_pricing() {
         let tokens = UsageTokens { prompt: 0, completion: 1000, cache_hit: 0, reasoning: 300 };
         // 思考部分用思考单价：300×0.5 + 普通输出 700×2 = 150+1400 = 1550 → 1.55
-        assert!((compute_cost(tokens, 2.0, 0.0, 0.5) - 1.55).abs() < 1e-9);
+        assert!((compute_cost(tokens, 2.0, 0.0, 2.0, 0.5) - 1.55).abs() < 1e-9);
         // 思考单价未配置：全部按正常输出价 → 1000×2/1000 = 2.0
-        assert_eq!(compute_cost(tokens, 2.0, 0.0, 0.0), 2.0);
+        assert_eq!(compute_cost(tokens, 2.0, 0.0, 2.0, 0.0), 2.0);
     }
 
     #[test]
     fn compute_cost_zero_tokens() {
         let tokens = UsageTokens::default();
-        assert_eq!(compute_cost(tokens, 2.0, 0.2, 0.5), 0.0);
+        assert_eq!(compute_cost(tokens, 2.0, 0.2, 2.0, 0.5), 0.0);
     }
 
     #[test]

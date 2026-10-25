@@ -691,11 +691,24 @@ async fn handle_non_stream_completion(
                 // ⑥ 记账（成功）：缓存/思考感知拆分计费；风险取请求侧 + 响应侧最高等级
                 let risk = risk_of(&prepared.request_findings, &response_findings);
                 let tokens = super::forward::extract_usage(resp_value.get("usage"));
+                let price = crate::models::resolve_model_price(
+                    &channel.model_prices,
+                    &channel.protocol,
+                    &prepared.model,
+                    &crate::commands::util::now_iso(),
+                    (
+                        channel.price_per_1k_tokens,
+                        channel.cache_price_per_1k_tokens,
+                        channel.price_per_1k_tokens,
+                        channel.reasoning_price_per_1k_tokens,
+                    ),
+                );
                 let cost = super::forward::compute_cost(
                     tokens,
-                    channel.price_per_1k_tokens,
-                    channel.cache_price_per_1k_tokens,
-                    channel.reasoning_price_per_1k_tokens,
+                    price.input,
+                    price.cache_hit,
+                    price.output,
+                    price.reasoning,
                 );
                 let response_json = serde_json::to_string(&resp_value).unwrap_or_default();
                 let response_body_owned = clamp_json_body(response_json);

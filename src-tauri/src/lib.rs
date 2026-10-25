@@ -185,6 +185,7 @@ pub fn run() {
             commands::channels::test_channel,
             commands::channels::fetch_channel_models,
             commands::channels::fetch_channel_balance,
+            commands::channels::fetch_deepseek_prices,
             // keys
             commands::keys::list_keys,
             commands::keys::create_key,

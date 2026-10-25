@@ -5,6 +5,8 @@ import type {
   ChannelBalance,
   ChannelStatus,
   ChannelType,
+  FetchedModelPrices,
+  ModelPrice,
   RequestLog,
   RequestDetail,
   SecurityLog,
@@ -45,6 +47,7 @@ const mapChannel = (c: RawChannel): Channel => ({
   pricePer1kTokens: c.pricePer1kTokens,
   cachePricePer1kTokens: c.cachePricePer1kTokens,
   reasoningPricePer1kTokens: c.reasoningPricePer1kTokens,
+  modelPrices: c.modelPrices ?? {},
   createdAt: c.createdAt,
 });
 
@@ -107,6 +110,7 @@ export const api = {
     pricePer1kTokens: number;
     cachePricePer1kTokens: number;
     reasoningPricePer1kTokens: number;
+    modelPrices?: Record<string, ModelPrice>;
   }): Promise<Channel> => {
     const c = await invoke<RawChannel>("create_channel", { ...input });
     return mapChannel(c);
@@ -127,6 +131,7 @@ export const api = {
     pricePer1kTokens: number;
     cachePricePer1kTokens: number;
     reasoningPricePer1kTokens: number;
+    modelPrices?: Record<string, ModelPrice>;
   }): Promise<void> => invoke("update_channel", { ...input }),
 
   deleteChannel: (id: string) => invoke("delete_channel", { id }),
@@ -146,6 +151,9 @@ export const api = {
 
   /** 查询渠道余额（目前仅 DeepSeek；其他厂商返回 supported=false） */
   fetchChannelBalance: (id: string) => invoke<ChannelBalance>("fetch_channel_balance", { id }),
+
+  /** 同步 DeepSeek 官方模型价格（官方无价格 API：抓文档页，失败回退内置目录） */
+  fetchDeepseekPrices: () => invoke<FetchedModelPrices>("fetch_deepseek_prices"),
 
   // ---- Keys ----
   listKeys: async (): Promise<ApiKey[]> =>
@@ -341,6 +349,7 @@ interface RawChannel {
   pricePer1kTokens: number;
   cachePricePer1kTokens: number;
   reasoningPricePer1kTokens: number;
+  modelPrices?: Record<string, ModelPrice>;
   createdAt: string;
 }
 interface RawKey {

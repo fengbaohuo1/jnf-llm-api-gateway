@@ -29,7 +29,32 @@ export interface Channel {
   pricePer1kTokens: number; // 每 1k token 成本（元）
   cachePricePer1kTokens: number; // 每 1k token 缓存命中成本（元），0 = 不区分缓存
   reasoningPricePer1kTokens: number; // 每 1k token 输出（thinking/reasoning）专用成本（元），0 = 不区分；界面以"输出单价"展示
+  /** 按模型定价（元/1k）：模型名 → 价格；空对象 = 使用渠道默认单价 */
+  modelPrices: Record<string, ModelPrice>;
   createdAt: string;
+}
+
+/** 单个模型的价格（元/1k tokens；DeepSeek 含高峰/空闲时段） */
+export interface ModelPrice {
+  input: number;
+  cacheHit: number;
+  output: number;
+  reasoning: number;
+  /** DeepSeek 空闲时段价格（官方为空闲 = 高峰 5 折）；缺省 = 不区分时段 */
+  offPeak?: {
+    input: number;
+    cacheHit: number;
+    output: number;
+    reasoning: number;
+  };
+}
+
+/** 官方价格同步结果（DeepSeek） */
+export interface FetchedModelPrices {
+  models: Record<string, ModelPrice>;
+  source: "official-docs" | "builtin";
+  sourceUrl: string;
+  fetchedAt: string;
 }
 
 /** 渠道余额（目前仅 DeepSeek 支持；supported=false 表示该厂商暂不支持） */

@@ -25,13 +25,14 @@ struct ChannelRow {
     price_per_1k_tokens: f64,
     cache_price_per_1k_tokens: f64,
     reasoning_price_per_1k_tokens: f64,
+    model_prices: String,
     created_at: String,
 }
 
 #[tauri::command]
 pub async fn list_channels(state: State<'_, DbState>) -> Result<Vec<Channel>, String> {
     let rows: Vec<ChannelRow> = sqlx::query_as(
-        "SELECT id, name, type, protocol, compat_reasoning_content, base_url, model, models, status, api_key_encrypted, latency_ms, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens, created_at FROM channels ORDER BY created_at DESC",
+        "SELECT id, name, type, protocol, compat_reasoning_content, base_url, model, models, status, api_key_encrypted, latency_ms, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens, model_prices, created_at FROM channels ORDER BY created_at DESC",
     )
     .fetch_all(pool(&state))
     .await
@@ -56,6 +57,7 @@ pub async fn list_channels(state: State<'_, DbState>) -> Result<Vec<Channel>, St
             price_per_1k_tokens: r.price_per_1k_tokens,
             cache_price_per_1k_tokens: r.cache_price_per_1k_tokens,
             reasoning_price_per_1k_tokens: r.reasoning_price_per_1k_tokens,
+            model_prices: crate::models::parse_model_prices(&r.model_prices),
             created_at: r.created_at,
         })
         .collect())
@@ -77,16 +79,20 @@ pub async fn create_channel(
     price_per_1k_tokens: f64,
     cache_price_per_1k_tokens: f64,
     reasoning_price_per_1k_tokens: f64,
+    // 按模型定价（模型名 → 价格，元/1k）；None/空对象 = 用渠道默认单价
+    model_prices: Option<serde_json::Value>,
 ) -> Result<Channel, String> {
     let id = new_id("ch");
     let created = now_iso();
     let models = crate::models::normalize_models(&models);
     let primary_model = models.first().cloned().unwrap_or_default();
     let models_json = serde_json::to_string(&models).unwrap_or_else(|_| "[]".into());
+    let model_prices_json = serde_json::to_string(&model_prices.unwrap_or_else(|| serde_json::json!({})))
+        .unwrap_or_else(|_| "{}".into());
     sqlx::query(
-        "INSERT INTO channels (id, name, type, protocol, compat_reasoning_content, base_url, model, models, status, api_key_encrypted, latency_ms, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,NULL,?11,?12,?13,?14,?15,?16,?16)",
+        "INSERT INTO channels (id, name, type, protocol, compat_reasoning_content, base_url, model, models, status, api_key_encrypted, latency_ms, priority, weight, price_per_1k_tokens, cache_price_per_1k_tokens, reasoning_price_per_1k_tokens, model_prices, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,NULL,?11,?12,?13,?14,?15,?16,?17,?17)",
     )
-    .bind(&id).bind(&name).bind(&type_).bind(&protocol).bind(compat_reasoning_content as i64).bind(&base_url).bind(&primary_model).bind(&models_json).bind(&status).bind(&api_key).bind(priority).bind(weight).bind(price_per_1k_tokens).bind(cache_price_per_1k_tokens).bind(reasoning_price_per_1k_tokens).bind(&created)
+    .bind(&id).bind(&name).bind(&type_).bind(&protocol).bind(compat_reasoning_content as i64).bind(&base_url).bind(&primary_model).bind(&models_json).bind(&status).bind(&api_key).bind(priority).bind(weight).bind(price_per_1k_tokens).bind(cache_price_per_1k_tokens).bind(reasoning_price_per_1k_tokens).bind(&model_prices_json).bind(&created)
     .execute(pool(&state))
     .await
     .map_err(|e| e.to_string())?;
@@ -101,6 +107,7 @@ pub async fn create_channel(
         base_url,
         model: primary_model,
         models,
+        model_prices: crate::models::parse_model_prices(&model_prices_json),
         status,
         api_key_masked: mask(&api_key),
         latency_ms: None,
@@ -130,6 +137,8 @@ pub async fn update_channel(
     price_per_1k_tokens: f64,
     cache_price_per_1k_tokens: f64,
     reasoning_price_per_1k_tokens: f64,
+    // 按模型定价（模型名 → 价格，元/1k）；None = 保持原值，空对象 = 清空
+    model_prices: Option<serde_json::Value>,
 ) -> Result<(), String> {
     // 前端编辑时提交完整表单，直接全量更新（api_key 传空字符串表示不改动密钥）。
     let models = crate::models::normalize_models(&models);
@@ -138,7 +147,8 @@ pub async fn update_channel(
     sqlx::query(
         "UPDATE channels SET name = ?2, type = ?3, protocol = ?4, compat_reasoning_content = ?5, base_url = ?6, model = ?7, models = ?8, status = ?9,
                 api_key_encrypted = CASE WHEN ?10 = '' THEN api_key_encrypted ELSE ?10 END,
-                priority = ?11, weight = ?12, price_per_1k_tokens = ?13, cache_price_per_1k_tokens = ?14, reasoning_price_per_1k_tokens = ?15, updated_at = ?16
+                priority = ?11, weight = ?12, price_per_1k_tokens = ?13, cache_price_per_1k_tokens = ?14, reasoning_price_per_1k_tokens = ?15,
+                model_prices = CASE WHEN ?16 IS NULL THEN model_prices ELSE ?16 END, updated_at = ?17
          WHERE id = ?1",
     )
     .bind(id.as_str())
@@ -156,6 +166,7 @@ pub async fn update_channel(
     .bind(price_per_1k_tokens)
     .bind(cache_price_per_1k_tokens)
     .bind(reasoning_price_per_1k_tokens)
+    .bind(model_prices.map(|v| v.to_string()))
     .bind(now_iso())
     .execute(pool(&state))
     .await
@@ -409,6 +420,217 @@ pub async fn fetch_channel_balance(
         }
     }
     Err(format!("查询余额失败：{last_error}"))
+}
+
+// ---------------- DeepSeek 模型价格同步 ----------------
+
+/// DeepSeek 官方没有价格查询 API（`/models` 只返回元数据），价格只公示在文档页。
+/// 同步时先尝试抓取官方中文文档页解析；抓取/解析失败回退内置价格目录（随应用更新）。
+const DEEPSEEK_PRICING_URL_CN: &str = "https://api-docs.deepseek.com/zh-cn/quick_start/pricing";
+const DEEPSEEK_PRICING_URL_EN: &str = "https://api-docs.deepseek.com/quick_start/pricing";
+
+fn per1k_from_per_m(per_m: f64) -> f64 {
+    (per_m / 1000.0 * 1e9).round() / 1e9
+}
+
+fn price_entry_json(
+    cache_hit_peak: f64,
+    cache_hit_off: f64,
+    input_peak: f64,
+    input_off: f64,
+    output_peak: f64,
+    output_off: f64,
+) -> serde_json::Value {
+    serde_json::json!({
+        "input": per1k_from_per_m(input_peak),
+        "cacheHit": per1k_from_per_m(cache_hit_peak),
+        "output": per1k_from_per_m(output_peak),
+        "reasoning": 0.0,
+        "offPeak": {
+            "input": per1k_from_per_m(input_off),
+            "cacheHit": per1k_from_per_m(cache_hit_off),
+            "output": per1k_from_per_m(output_off),
+            "reasoning": 0.0,
+        }
+    })
+}
+
+/// 内置官方价格目录（元/1M tokens；空闲时段 = 高峰 5 折），官方调整价格时随版本更新。
+/// 当前对应：deepseek-flash（V4.1-Flash-1017）与 deepseek-v4-pro（V4-Pro-0813）。
+pub(crate) fn builtin_deepseek_prices() -> serde_json::Map<String, serde_json::Value> {
+    let mut models = serde_json::Map::new();
+    // 缓存命中 / 缓存未命中 / 输出（高峰, 空闲）
+    models.insert(
+        "deepseek-flash".to_string(),
+        price_entry_json(0.04, 0.02, 2.0, 1.0, 8.0, 4.0),
+    );
+    models.insert(
+        "deepseek-v4-pro".to_string(),
+        price_entry_json(0.30, 0.15, 9.0, 4.5, 27.0, 13.5),
+    );
+    models
+}
+
+/// 去 HTML 标签并压缩空白，供价格表解析（Docusaurus 静态页表格）。
+pub(crate) fn strip_html_tags(html: &str) -> String {
+    let mut out = String::with_capacity(html.len() / 2);
+    let mut in_tag = false;
+    for ch in html.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => {
+                in_tag = false;
+                out.push(' ');
+            }
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    out.replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// 解析官方中文价格页文本：模型列 + 缓存命中/未命中/输出（空闲、高峰）三行。
+pub(crate) fn parse_deepseek_pricing_text(
+    text: &str,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let name_re = regex::Regex::new(r"deepseek-[a-z0-9][a-z0-9.-]*").ok()?;
+    let header_pos = text.find("模型")?;
+    let window: String = text[header_pos..text.len().min(header_pos + 400)].to_string();
+    let mut names: Vec<String> = Vec::new();
+    for m in name_re.find_iter(&window) {
+        let name = m.as_str();
+        if name == "deepseek.com" || name == "deepseek-ai" {
+            continue;
+        }
+        if !names.iter().any(|n| n == name) {
+            names.push(name.to_string());
+        }
+    }
+    if names.is_empty() {
+        return None;
+    }
+
+    let row = |label: &str, suffix: &str| -> Option<Vec<f64>> {
+        let pattern = format!(
+            r"{label}\s*{}\s*空闲时段\s*((?:[0-9]+(?:\.[0-9]+)?\s*元\s*){{1,8}})高峰时段\s*((?:[0-9]+(?:\.[0-9]+)?\s*元\s*){{1,8}})",
+            suffix
+        );
+        let re = regex::Regex::new(&pattern).ok()?;
+        let caps = re.captures(text)?;
+        let nums = |s: &str| -> Vec<f64> {
+            s.split("元")
+                .filter_map(|v| v.trim().parse::<f64>().ok())
+                .collect()
+        };
+        let mut off = nums(&caps[1]);
+        let mut peak = nums(&caps[2]);
+        if off.len() != names.len() || peak.len() != names.len() {
+            return None;
+        }
+        off.append(&mut peak);
+        Some(off) // 前半空闲，后半高峰
+    };
+
+    let cache_hit = row("百万tokens输入", "（缓存命中）")?;
+    let cache_miss = row("百万tokens输入", "（缓存未命中）")?;
+    let output = row("百万tokens输出", "")?;
+    let n = names.len();
+    let mut models = serde_json::Map::new();
+    for (i, name) in names.into_iter().enumerate() {
+        models.insert(
+            name,
+            price_entry_json(
+                cache_hit[n + i],
+                cache_hit[i],
+                cache_miss[n + i],
+                cache_miss[i],
+                output[n + i],
+                output[i],
+            ),
+        );
+    }
+    Some(models)
+}
+
+async fn fetch_deepseek_pricing_html(url: &str) -> Option<String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .ok()?;
+    let resp = client
+        .get(url)
+        .header(reqwest::header::USER_AGENT, "llm-api-gateway price-sync")
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    resp.text().await.ok()
+}
+
+/// 同步 DeepSeek 官方模型价格（元/1k 存储，含空闲时段价）。
+/// 返回 `{ models: {模型: 价格}, source, sourceUrl, fetchedAt }`。
+#[tauri::command]
+pub async fn fetch_deepseek_prices() -> Result<serde_json::Value, String> {
+    for url in [DEEPSEEK_PRICING_URL_CN, DEEPSEEK_PRICING_URL_EN] {
+        if let Some(html) = fetch_deepseek_pricing_html(url).await {
+            let text = strip_html_tags(&html);
+            if let Some(models) = parse_deepseek_pricing_text(&text) {
+                return Ok(serde_json::json!({
+                    "models": models,
+                    "source": "official-docs",
+                    "sourceUrl": url,
+                    "fetchedAt": now_iso(),
+                }));
+            }
+        }
+    }
+    Ok(serde_json::json!({
+        "models": builtin_deepseek_prices(),
+        "source": "builtin",
+        "sourceUrl": DEEPSEEK_PRICING_URL_CN,
+        "fetchedAt": now_iso(),
+    }))
+}
+
+#[cfg(test)]
+mod deepseek_price_tests {
+    use super::*;
+
+    const SAMPLE: &str = "模型 deepseek-flash (1) deepseek-v4-pro BASE URL (OpenAI 格式) https://api.deepseek.com 模型版本 DeepSeek-V4.1-Flash-1017 DeepSeek-V4-Pro-0813 价格 (2) 百万tokens输入 （缓存命中） 空闲时段 0.02元 0.15元 高峰时段 0.04元 0.30元 百万tokens输入 （缓存未命中） 空闲时段 1元 4.5元 高峰时段 2元 9.0元 百万tokens输出 空闲时段 4元 13.5元 高峰时段 8元 27.0元 并发限制 (3) 2500 500";
+
+    #[test]
+    fn parses_official_pricing_text() {
+        let models = parse_deepseek_pricing_text(SAMPLE).expect("pricing parsed");
+        let flash = models.get("deepseek-flash").expect("flash");
+        assert!((flash["input"].as_f64().unwrap() - 0.002).abs() < 1e-12);
+        assert!((flash["cacheHit"].as_f64().unwrap() - 0.00004).abs() < 1e-12);
+        assert!((flash["output"].as_f64().unwrap() - 0.008).abs() < 1e-12);
+        assert!((flash["offPeak"]["input"].as_f64().unwrap() - 0.001).abs() < 1e-12);
+        let pro = models.get("deepseek-v4-pro").expect("pro");
+        assert!((pro["output"].as_f64().unwrap() - 0.027).abs() < 1e-12);
+        assert!((pro["offPeak"]["output"].as_f64().unwrap() - 0.0135).abs() < 1e-12);
+    }
+
+    #[test]
+    fn rejects_unparseable_text() {
+        assert!(parse_deepseek_pricing_text("hello world").is_none());
+        assert!(parse_deepseek_pricing_text("").is_none());
+    }
+
+    #[test]
+    fn builtin_catalog_covers_current_models() {
+        let builtin = builtin_deepseek_prices();
+        assert!(builtin.contains_key("deepseek-flash"));
+        assert!(builtin.contains_key("deepseek-v4-pro"));
+        let flash = builtin.get("deepseek-flash").unwrap();
+        assert!((flash["output"].as_f64().unwrap() - 0.008).abs() < 1e-12);
+    }
 }
 
 // ---------------- 模型列表拉取（添加渠道时选模型用） ----------------

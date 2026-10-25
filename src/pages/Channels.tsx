@@ -18,6 +18,7 @@ import type {
   ChannelProtocol,
   ChannelStatus,
   ChannelType,
+  ModelPrice,
 } from "../types";
 import { useAppStore } from "../store/useAppStore";
 import { PageHeader, Card, Toggle } from "../components/ui";
@@ -44,7 +45,17 @@ type FormState = {
   pricePerM: string;
   cachePricePerM: string;
   reasoningPricePerM: string;
+  /** 按模型定价（元/M 输入；空字符串 = 未配置，回退默认单价） */
+  modelPrices: Record<string, ModelPriceForm>;
 };
+
+interface ModelPriceForm {
+  inputPerM: string;
+  cacheHitPerM: string;
+  outputPerM: string;
+  /** DeepSeek 空闲时段是否按 5 折计入（同步官方价格时自动开启） */
+  offPeak: boolean;
+}
 
 const emptyForm: FormState = {
   name: "",
@@ -60,6 +71,7 @@ const emptyForm: FormState = {
   pricePerM: "",
   cachePricePerM: "",
   reasoningPricePerM: "",
+  modelPrices: {},
 };
 
 /** 每 1k 单价（存储）→ 元/M 展示值，去尾零 */
@@ -124,6 +136,8 @@ function ChannelFormModal({
   const [modelInput, setModelInput] = useState("");
   const [modelErr, setModelErr] = useState<string | null>(null);
   const [loadingModels, setLoadingModels] = useState(false);
+  const [syncingPrices, setSyncingPrices] = useState(false);
+  const [syncNote, setSyncNote] = useState<string | null>(null);
 
   // Reset form when opening with a fresh target.
   const [lastOpen, setLastOpen] = useState(open);
@@ -135,6 +149,8 @@ function ChannelFormModal({
       setModelInput("");
       setModelErr(null);
       setLoadingModels(false);
+      setSyncNote(null);
+      setSyncingPrices(false);
     }
   }
 
@@ -151,9 +167,24 @@ function ChannelFormModal({
   const addModel = (raw: string) => {
     const m = raw.trim();
     if (!m) return;
-    setForm((f) => (f.models.includes(m) ? f : { ...f, models: [...f.models, m] }));
+    setForm((f) =>
+      f.models.includes(m)
+        ? f
+        : {
+            ...f,
+            models: [...f.models, m],
+            modelPrices: f.modelPrices[m]
+              ? f.modelPrices
+              : { ...f.modelPrices, [m]: { inputPerM: "", cacheHitPerM: "", outputPerM: "", offPeak: false } },
+          },
+    );
   };
-  const removeModel = (m: string) => setForm((f) => ({ ...f, models: f.models.filter((x) => x !== m) }));
+  const removeModel = (m: string) =>
+    setForm((f) => {
+      const next = { ...f.modelPrices };
+      delete next[m];
+      return { ...f, models: f.models.filter((x) => x !== m), modelPrices: next };
+    });
 
   const changeType = (t: ChannelType) => {
     setForm((f) => {
@@ -193,6 +224,43 @@ function ChannelFormModal({
   // 生效协议：显式优先，否则按渠道类型推导（与后端一致）
   const effectiveProtocol = form.protocol || autoProtocol(form.type);
   const isDeepSeek = effectiveProtocol === "deepseek";
+
+  /** 同步 DeepSeek 官方模型价格：官方无价格 API，后端抓文档页（失败回退内置目录） */
+  const syncDeepseekPrices = async () => {
+    if (form.models.length === 0) {
+      setSyncNote("请先添加模型，再同步价格");
+      return;
+    }
+    setSyncingPrices(true);
+    setSyncNote(null);
+    try {
+      const r = await api.fetchDeepseekPrices();
+      setForm((f) => {
+        const next = { ...f.modelPrices };
+        for (const m of f.models) {
+          const p = r.models[m];
+          if (!p) continue;
+          next[m] = {
+            inputPerM: p.input > 0 ? String(perM(p.input)) : "",
+            cacheHitPerM: p.cacheHit > 0 ? String(perM(p.cacheHit)) : "",
+            outputPerM: p.output > 0 ? String(perM(p.output)) : "",
+            offPeak: !!p.offPeak,
+          };
+        }
+        return { ...f, modelPrices: next };
+      });
+      setSyncNote(
+        r.source === "official-docs"
+          ? `已同步官方价格（${r.fetchedAt}）`
+          : "官方文档页暂时不可达，已填入内置官方价格目录（随应用更新）",
+      );
+    } catch (e) {
+      setSyncNote(`同步失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSyncingPrices(false);
+    }
+  };
+
   const isNativeUnimplemented = effectiveProtocol === "anthropic" || effectiveProtocol === "gemini";
 
   // DeepSeek 模型列表不写死：编辑已有渠道（Key 已保存）时自动拉取；
@@ -453,6 +521,88 @@ function ChannelFormModal({
                 placeholder="0"
               />
             </Field>
+
+            {/* 按模型定价：每个模型的输入/缓存/输出单价可不同；DeepSeek 支持一键同步官方价 */}
+            {form.models.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-medium text-sub">按模型定价</p>
+                    <p className="text-xs text-faint">
+                      每个模型的单价可不同；留空 = 用上面的默认单价
+                      {isDeepSeek ? "。计时按官方高峰/空闲时段自动折算" : ""}
+                    </p>
+                  </div>
+                  {isDeepSeek && (
+                    <Button
+                      variant="secondary"
+                      className="shrink-0"
+                      disabled={syncingPrices}
+                      onClick={() => void syncDeepseekPrices()}
+                      title="DeepSeek 无价格 API：抓取官方文档价格页，失败回退内置目录"
+                    >
+                      <RefreshCw size={13} className={`mr-1 inline ${syncingPrices ? "animate-spin" : ""}`} />
+                      {syncingPrices ? "同步中" : "同步官方价"}
+                    </Button>
+                  )}
+                </div>
+                {syncNote && <p className="text-xs text-faint">{syncNote}</p>}
+                {form.models.map((m) => {
+                  const p = form.modelPrices[m] ?? {
+                    inputPerM: "",
+                    cacheHitPerM: "",
+                    outputPerM: "",
+                    offPeak: false,
+                  };
+                  const update = (patch: Partial<ModelPriceForm>) =>
+                    setForm((f) => ({ ...f, modelPrices: { ...f.modelPrices, [m]: { ...p, ...patch } } }));
+                  return (
+                    <div key={m} className="rounded-lg bg-inset/60 p-2">
+                      <div className="mb-1.5 flex items-center justify-between gap-2">
+                        <span className="truncate font-mono text-[11px] text-sub" title={m}>
+                          {m}
+                        </span>
+                        <label className="flex shrink-0 items-center gap-1 text-[11px] text-faint">
+                          <input
+                            type="checkbox"
+                            checked={p.offPeak}
+                            onChange={(e) => update({ offPeak: e.target.checked })}
+                            className="h-3 w-3 rounded"
+                          />
+                          空闲时段半价
+                        </label>
+                      </div>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        <input
+                          className={inputCls}
+                          placeholder="输入"
+                          type="text"
+                          inputMode="decimal"
+                          value={p.inputPerM}
+                          onChange={(e) => update({ inputPerM: e.target.value })}
+                        />
+                        <input
+                          className={inputCls}
+                          placeholder="缓存命中"
+                          type="text"
+                          inputMode="decimal"
+                          value={p.cacheHitPerM}
+                          onChange={(e) => update({ cacheHitPerM: e.target.value })}
+                        />
+                        <input
+                          className={inputCls}
+                          placeholder="输出"
+                          type="text"
+                          inputMode="decimal"
+                          value={p.outputPerM}
+                          onChange={(e) => update({ outputPerM: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </Accordion>
         <Field label="API Key" hint={initial ? "留空则保持不变" : undefined}>
@@ -649,7 +799,16 @@ function ChannelCard({
           <div>
             <p className="text-[10px] text-faint">单价</p>
             <p className="text-muted">
-              {channel.pricePer1kTokens > 0 ? (
+              {Object.keys(channel.modelPrices ?? {}).length > 0 ? (
+                <span
+                  title={Object.entries(channel.modelPrices)
+                    .map(([m, p]) => `${m}: 输入 ¥${perM(p.input)}/M · 输出 ¥${perM(p.output)}/M`)
+                    .join("\n")}
+                >
+                  按模型
+                  <span className="text-[10px] text-faint">（{Object.keys(channel.modelPrices).length}）</span>
+                </span>
+              ) : channel.pricePer1kTokens > 0 ? (
                 <>
                   ¥{perM(channel.pricePer1kTokens)}
                   <span className="text-[10px] text-faint">/M</span>
@@ -763,10 +922,26 @@ export function Channels() {
   const handleSubmit = async (data: FormState) => {
     setSubmitting(true);
     setError(null);
+    // 按模型定价：只保留与当前模型列表匹配、且至少填了一项的条目；勾选空闲半价时按 5 折写入 offPeak
+    const modelPrices: Record<string, ModelPrice> = {};
+    for (const m of data.models) {
+      const p = data.modelPrices[m];
+      if (!p) continue;
+      const input = per1k(parseFloat(p.inputPerM) || 0);
+      const cacheHit = per1k(parseFloat(p.cacheHitPerM) || 0);
+      const output = per1k(parseFloat(p.outputPerM) || 0);
+      if (input <= 0 && cacheHit <= 0 && output <= 0) continue;
+      const entry: ModelPrice = { input, cacheHit, output, reasoning: 0 };
+      if (p.offPeak) {
+        entry.offPeak = { input: input / 2, cacheHit: cacheHit / 2, output: output / 2, reasoning: 0 };
+      }
+      modelPrices[m] = entry;
+    }
     const price = {
       pricePer1kTokens: per1k(parseFloat(data.pricePerM) || 0),
       cachePricePer1kTokens: per1k(parseFloat(data.cachePricePerM) || 0),
       reasoningPricePer1kTokens: per1k(parseFloat(data.reasoningPricePerM) || 0),
+      modelPrices,
     };
     try {
       if (editing) {
@@ -978,6 +1153,17 @@ export function Channels() {
           pricePerM: editing.pricePer1kTokens > 0 ? String(perM(editing.pricePer1kTokens)) : "",
           cachePricePerM: editing.cachePricePer1kTokens > 0 ? String(perM(editing.cachePricePer1kTokens)) : "",
           reasoningPricePerM: editing.reasoningPricePer1kTokens > 0 ? String(perM(editing.reasoningPricePer1kTokens)) : "",
+          modelPrices: Object.fromEntries(
+            Object.entries(editing.modelPrices ?? {}).map(([m, p]) => [
+              m,
+              {
+                inputPerM: p.input > 0 ? String(perM(p.input)) : "",
+                cacheHitPerM: p.cacheHit > 0 ? String(perM(p.cacheHit)) : "",
+                outputPerM: p.output > 0 ? String(perM(p.output)) : "",
+                offPeak: !!p.offPeak,
+              },
+            ]),
+          ),
         } : null}
         onClose={() => setModalOpen(false)}
         onSubmit={handleSubmit}

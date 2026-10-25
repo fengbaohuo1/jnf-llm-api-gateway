@@ -36,15 +36,30 @@ pub(crate) async fn stream_response(
 ) -> Response {
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(32);
 
+    // 按模型定价 + DeepSeek 高峰/空闲时段自动折算
+    let price = crate::models::resolve_model_price(
+        &channel.model_prices,
+        &channel.protocol,
+        &prepared.model,
+        &crate::commands::util::now_iso(),
+        (
+            channel.price_per_1k_tokens,
+            channel.cache_price_per_1k_tokens,
+            channel.price_per_1k_tokens,
+            channel.reasoning_price_per_1k_tokens,
+        ),
+    );
+
     let mut stats = StreamStats::new(
         state.pool.clone(),
         state.scanner.clone(),
         &channel.id,
         &channel.name,
         prepared,
-        channel.price_per_1k_tokens,
-        channel.cache_price_per_1k_tokens,
-        channel.reasoning_price_per_1k_tokens,
+        price.input,
+        price.cache_hit,
+        price.output,
+        price.reasoning,
         started,
         proto,
         attempts,
@@ -129,8 +144,9 @@ struct StreamStats {
     key_id: String,
     key_name: String,
     model: String,
-    price: f64,
+    input_price: f64,
     cache_price: f64,
+    output_price: f64,
     reasoning_price: f64,
     security_enabled: bool,
     security_mode: String,
@@ -169,8 +185,9 @@ impl StreamStats {
         channel_id: &str,
         channel_name: &str,
         prepared: &PreparedRequest,
-        price: f64,
+        input_price: f64,
         cache_price: f64,
+        output_price: f64,
         reasoning_price: f64,
         started: Instant,
         proto: ClientProtocol,
@@ -192,8 +209,9 @@ impl StreamStats {
             key_id: prepared.auth.id.clone(),
             key_name: prepared.auth.name.clone(),
             model: prepared.model.clone(),
-            price,
+            input_price,
             cache_price,
+            output_price,
             reasoning_price,
             security_enabled: prepared.settings.security_enabled,
             security_mode: prepared.settings.security_mode.clone(),
@@ -377,7 +395,7 @@ impl StreamStats {
                 reasoning: 0, // 估算路径拿不到思考明细
             },
         };
-        let cost = compute_cost(tokens, self.price, self.cache_price, self.reasoning_price);
+        let cost = compute_cost(tokens, self.input_price, self.cache_price, self.output_price, self.reasoning_price);
         let latency = self.started.elapsed().as_millis() as i64;
         // 风险：请求侧 + 响应侧最高等级；内容是否落库由 log.store_level 决定
         let risk = risk_of(&self.request_findings, &self.response_findings);
@@ -641,6 +659,7 @@ mod tests {
             "c1",
             "测试渠道",
             &prepared,
+            0.0,
             0.0,
             0.0,
             0.0,

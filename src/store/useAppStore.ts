@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { api } from "../api";
-import type { ApiKey, Channel, RequestLog, ChannelType, ChannelStatus } from "../types";
+import type { ApiKey, Channel, RequestLog, ChannelType, ChannelStatus, ModelPrice } from "../types";
 
 interface AppState {
   channels: Channel[];
@@ -28,6 +28,7 @@ interface AppState {
     pricePer1kTokens: number;
     cachePricePer1kTokens: number;
     reasoningPricePer1kTokens: number;
+    modelPrices?: Record<string, ModelPrice>;
   }) => Promise<void>;
   updateChannel: (input: {
     id: string;
@@ -44,6 +45,7 @@ interface AppState {
     pricePer1kTokens: number;
     cachePricePer1kTokens: number;
     reasoningPricePer1kTokens: number;
+    modelPrices?: Record<string, ModelPrice>;
   }) => Promise<void>;
   removeChannel: (id: string) => Promise<void>;
   toggleChannelStatus: (id: string) => Promise<void>;
