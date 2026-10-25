@@ -412,6 +412,9 @@ cargo test
 **端口 8787 被占用？**
 改 `settings.json` 里的 `server.port`（或设置页「监听服务」里修改后保存），然后**重启应用**——监听地址与端口在启动时绑定。
 
+**`npm run tauri dev` 报 `failed to remove ...llm-api-gateway.exe` / 拒绝访问？**
+上一个应用进程还在运行（关闭窗口只是隐藏到托盘），Windows 会锁住 `target\debug` 下的 exe。先右键托盘图标 → 退出，或执行 `Get-Process llm-api-gateway | Stop-Process -Force`，再重新 `npm run tauri dev`。
+
 **改完 `settings.json` 不生效？**
 文件在启动时导入；要么重启应用，要么在设置页点「重新加载配置文件」。
 

@@ -55,6 +55,7 @@
 - **MCP 监听 0.0.0.0 必须带令牌**：`init` 与 `mcp_save_config` 均拒绝「0.0.0.0 且 services.mcp.token 为空」的配置（否则局域网可无鉴权调用知识库删除/导入工具）
 - **DeepSeek 思考模式坑**：思考模型的 tool-call 轮次必须回传 `reasoning_content`（客户端多数不回传），由渠道级 `compat_reasoning_content` 在转发层补空；`deepseek-chat` 等非思考模型对空值一般容忍。渠道测试曾用厂商默认模型（gpt-3.5-turbo）测 DeepSeek → 必然 400，已改为使用渠道模型
 - **渠道协议三处联动**：新增 `channels.protocol` 后，凡查 channels 的地方都要带上 protocol 并走 `effective_protocol`（scheduler 队列、test_channel、KB bind_answer/chat）；测试内存库的 `CREATE TABLE channels` 也要同步加列，否则测试期报 `no such column: protocol`
+- **Windows 下 `npm run tauri dev` 重新编译报 `failed to remove ...llm-api-gateway.exe`（os error 5 拒绝访问）**：关闭窗口只是隐藏到托盘，旧进程仍锁住 `target\debug` 下的 exe；先从托盘菜单「退出」或 `Get-Process llm-api-gateway | Stop-Process -Force`，再重新 `npm run tauri dev`
 - **Tauri 2 桌面坑**：`setup` 闭包是同步的，查库必须 `tauri::async_runtime::block_on`；`TrayIcon` 必须 `app.manage()` 保活（drop 即移除托盘）；NSIS 配置**没有** `createDesktopShortcut`/`shortcutName` 字段（桌面快捷方式默认创建）；autostart 插件 args 在 Rust `init()` 配置，前端 `enable()` 无参数
 - **批量文本替换防误伤**：`String.Replace("bg-indigo-50","bg-accent-soft")` 会把 `bg-indigo-500` 变成 `bg-accent-soft0`（子串包含）——批量替换后必须 grep 数字后缀产物（`accent-soft0`/`inset0` 等）核查；subagent 批量改样式在此环境不可靠（两轮静默失败），改用脚本 + 人工核查
 - 远程：Gitee HTTPS（凭据管理器有凭据）；PowerShell 5.1 不支持 `&&`，commit 消息用 `-F` 文件避免引号截断
